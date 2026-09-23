@@ -19,6 +19,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AttachedFile, ParsedAnalysis } from "./types";
 import { SAMPLE_PROBLEMS } from "./data/sampleProblems";
 import { parseAnalysisMarkdown } from "./utils/parser";
+import { executeDirectGeminiAnalysis } from "./utils/gemini";
 
 export default function App() {
   // Input states
@@ -178,30 +179,66 @@ int main() {
         model,
       };
 
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      let analysisText = "";
 
-      const data = await response.json();
+      // 1. First attempt: call backend API endpoint (/api/analyze)
+      let apiSucceeded = false;
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || "Không thể nhận phản hồi từ AI.");
+        const rawText = await response.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = null;
+        }
+
+        if (response.ok && data && data.success && data.analysis) {
+          analysisText = data.analysis;
+          apiSucceeded = true;
+        } else if (data && data.error) {
+          // If server explicitly returned an error (e.g. rate limit or API key error)
+          if (userApiKey) {
+            // If user has provided a custom API key, try direct client execution
+            console.log("Server error received, trying client-side direct SDK call...");
+          } else {
+            throw new Error(data.error);
+          }
+        }
+      } catch (fetchErr: any) {
+        console.warn("API route fetch issue:", fetchErr?.message);
       }
 
-      const parsed = parseAnalysisMarkdown(data.analysis);
+      // 2. Fallback: If backend endpoint is unavailable (e.g., static deploy on Vercel)
+      if (!apiSucceeded) {
+        if (userApiKey) {
+          // Execute directly on browser using Gemini SDK
+          const directResult = await executeDirectGeminiAnalysis(payload, userApiKey);
+          analysisText = directResult.analysis;
+        } else {
+          throw new Error(
+            "Khi triển khai trên Vercel hoặc môi trường tĩnh, bạn cần bấm vào biểu tượng 'Cài đặt AI' (bánh răng) ở góc trên bên phải để nhập Gemini API Key miễn phí (lấy tại Google AI Studio) để phân tích trực tiếp."
+          );
+        }
+      }
+
+      const parsed = parseAnalysisMarkdown(analysisText);
       setResult(parsed);
-      localStorage.setItem("cp_last_analysis", data.analysis);
+      localStorage.setItem("cp_last_analysis", analysisText);
 
       // Smooth scroll to results
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 100);
     } catch (err: any) {
-      setError(err?.message || "Đã xảy ra lỗi không mong muốn.");
+      setError(err?.message || "Đã xảy ra lỗi không mong muốn khi phân tích.");
     } finally {
       setIsLoading(false);
     }

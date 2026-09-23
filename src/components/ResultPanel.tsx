@@ -103,7 +103,11 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
 
   // Error state
   if (error) {
-    const isApiKeyError = error.toLowerCase().includes("api key") || error.toLowerCase().includes("chưa cấu hình");
+    const isApiKeyError =
+      error.toLowerCase().includes("api key") ||
+      error.toLowerCase().includes("chưa cấu hình") ||
+      error.toLowerCase().includes("cài đặt") ||
+      error.toLowerCase().includes("vercel");
 
     return (
       <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-rose-950/20 border border-rose-900/60 rounded-2xl min-h-[400px] text-center shadow-xl">

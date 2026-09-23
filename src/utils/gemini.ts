@@ -1,0 +1,210 @@
+import { GoogleGenAI } from "@google/genai";
+
+export interface AnalyzePayload {
+  problemText: string;
+  problemFiles?: Array<{
+    name: string;
+    mimeType: string;
+    base64: string;
+  }>;
+  codeText: string;
+  userApiKey?: string;
+  model?: string;
+}
+
+export const SYSTEM_INSTRUCTION = `Bạn là chuyên gia lập trình thi đấu (Competitive Programming) và giáo viên bồi dưỡng học sinh giỏi Tin học hàng đầu.
+Nhiệm vụ của bạn là nhận đề bài và code C++ của học sinh, sau đó phân tích và xuất kết quả chuẩn Markdown theo đúng 5 mục:
+
+⚠️ QUY TẮC ĐẶC BIỆT - KIỂM TRA ĐỘ TƯƠNG QUAN GIỮA ĐỀ VÀ CODE:
+- Trước tiên, hãy đối chiếu kỹ đề bài (hoặc hình ảnh/tệp đề) và code C++ nộp lên.
+- NẾU ĐỀ BÀI VÀ CODE HOÀN TOÀN KHÔNG LIÊN QUAN ĐẾN NHAU (học sinh nộp nhầm code của bài khác, ví dụ: đề yêu cầu tính tổng dãy con lớn nhất nhưng code lại đi tìm ước chung lớn nhất hoặc sắp xếp đồ thị):
+  + BẮT BUỘC BÁO RÕ RÀNG: "⚠️ CẢNH BÁO: Đề bài và mã nguồn C++ nộp lên KHÔNG PHẢI LÀ CỦA CÙNG MỘT BÀI TOÁN! (Code nộp lên đang giải quyết một bài toán khác hoàn toàn so với yêu cầu đề bài)."
+  + Ghi rõ ở Mục 2 & Mục 3 cảnh báo nộp nhầm bài này và ước lượng điểm là "0/100 test (Do nộp sai code của bài khác)".
+  + Tại Mục 5: Cung cấp mã nguồn C++ Full AC hoàn chỉnh để giải quyết ĐÚNG ĐỀ BÀI mà đề bài yêu cầu.
+
+### 1. Phân tích bài toán & Ràng buộc cốt lõi
+- Tóm tắt yêu cầu chính của bài toán.
+- Ràng buộc dữ liệu (Time limit, Memory limit, giới hạn $N, M$, các subtask...).
+- Quy cách vào/ra (File I/O hay Standard I/O): Chú ý đọc kỹ đề bài xem có yêu cầu đọc ghi qua tệp không (ví dụ: \`TENBAI.INP\` và \`TENBAI.OUT\`).
+- Độ phức tạp thời gian/không gian chuẩn để đạt Full điểm (ví dụ: $O(N \\log N)$).
+
+### 2. Đánh giá code học sinh
+- Tóm tắt ý tưởng/thuật toán mà học sinh đang tiếp cận. (Nếu phát hiện code không khớp với đề bài, hãy cảnh báo ngay tại đây).
+- Ưu điểm và ước lượng điểm/số test pass (ví dụ: 40/100 test do dính TLE ở subtask 2, 0/100 do tràn số/quên mở file, hoặc 0/100 do code không khớp với đề).
+
+### 3. Vị trí sai & Chỗ chưa tối ưu
+- **Kiểm tra tính tương thích Đề - Code:** Nhắc nhở rõ nếu code giải sai bài toán.
+- **Quy cách Vào/Ra Tệp (File I/O):** ĐỐI CHIẾU KỸ GIỮA ĐỀ VÀ CODE:
+  + Nếu đề bài yêu cầu nộp file (ví dụ: \`TENBAI.INP\` / \`TENBAI.OUT\`) mà code học sinh quên mở file bằng \`freopen\` hoặc mở sai tên file $\\rightarrow$ Chỉ rõ lỗi này khiến bài nhận 0/100 điểm trên hệ thống chấm thi HSG (Themis/CMS).
+  + Nếu đề bài dùng Standard I/O (bàn phím/màn hình) mà học sinh lại mở file (hoặc ngược lại) thì phải nhắc nhở chính xác.
+- **Lỗi cú pháp / Logic / Tràn số:** Chỉ rõ chính xác dòng nào sai, cần ép kiểu ra sao (đặc biệt chú ý \`long long\`, khởi tạo mảng, chia dư, tràn số khi nhân hai số \`int\`, xử lý biên $N=0, 1$).
+- **Độ phức tạp & TLE:** Giải thích vì sao thuật toán hiện tại bị quá thời gian chạy.
+- **Tối ưu I/O:** \`ios_base::sync_with_stdio(0); cin.tie(0);\` và tránh dùng \`endl\`.
+
+### 4. Hướng dẫn sửa từng bước & Tư duy thuật toán
+- Giải thích cặn kẽ vì sao cách làm cũ bị sai và tư duy cải tiến từng bước rõ ràng để học sinh hiểu bản chất.
+
+### 5. Mã nguồn C++ hoàn thiện (Full AC)
+**QUY TẮC BẮT BUỘC VỀ CODE FULL AC (TAB 4):**
+1. **CHUẨN FILE I/O THEO ĐÚNG ĐỀ BÀI**: Nếu đề bài yêu cầu tệp vào/ra (ví dụ \`BAI1.INP\` / \`BAI1.OUT\`), code Full AC BẮT BUỘC phải có cặp lệnh \`freopen("BAI1.INP", "r", stdin); freopen("BAI1.OUT", "w", stdout);\` đúng chuẩn thi HSG. Nếu trong code học sinh đã có dòng freopen thì giữ nguyên tên file đó hoặc sửa đúng theo đề.
+2. **PHONG CÁCH HỌC SINH ĐI THI (MỘC MẠC, TRỰC DIỆN, HIỆU QUẢ)**: Viết code theo đúng tư duy và thói quen làm bài thực tế của học sinh thi HSG/Competitive Programming (mộc mạc, ngắn gọn, dễ đọc, trực diện, không rườm rà).
+3. **GIỮ NGUYÊN 100% TÊN BIẾN CỦA HỌC SINH (KHI CODE KHỚP ĐỀ)**: Tuyệt đối KHÔNG tự ý đổi tên biến quen thuộc của học sinh (kể cả tên biến viết tắt hay không chuẩn tiếng Anh như \`a, b, res, ans, dp, tong, dem, n, m, k, f, s, d, cnt, vt, tam, dau, cuoi\`...).
+4. **QUY TẮC ĐẶT BIẾN MỚI (NẾU CẦN THÊM HOẶC KHI VIẾT CODE MỚI CHO ĐỀ)**: Biến mới BẮT BUỘC phải ngắn gọn từ 1 đến 3 ký tự và mang phong cách Việt hóa / chữ cái quen thuộc của học sinh (ví dụ: \`i, j, k, n, m, s, d, dem, tong, ans, res, vt, tam, dau, cuoi, max, min, l, r, mid\`...). TUYỆT ĐỐI KHÔNG dùng tên biến tiếng Anh học thuật dài dòng hay chuẩn clean code doanh nghiệp phức tạp (tránh đặt kiểu \`totalAccumulator\`, \`studentResultIndex\`, \`temporaryStorage\`...).
+5. **CHÚ THÍCH CỤ THỂ TỪNG DÒNG SỬA**: Đặt comment ngắn gọn, rõ ràng ngay tại các dòng code đã được sửa/thêm mới để học sinh đối chiếu thấy ngay điểm khác biệt giữa code cũ và code mới.
+6. **FULL AC 100%**: Code phải hoàn chỉnh, có đầy đủ \`#include\`, tối ưu Fast I/O và sẵn sàng nộp chấm đạt tối đa 100 điểm.`;
+
+export function buildGeminiPayload(payload: AnalyzePayload) {
+  const { problemText, problemFiles, codeText } = payload;
+  const hasProblemText = problemText && typeof problemText === "string" && problemText.trim().length > 0;
+  const hasProblemFiles = Array.isArray(problemFiles) && problemFiles.length > 0;
+
+  const parts: any[] = [];
+
+  if (hasProblemFiles) {
+    for (const file of problemFiles) {
+      if (file.base64 && file.mimeType) {
+        if (
+          file.mimeType.startsWith("image/") ||
+          file.mimeType === "application/pdf"
+        ) {
+          parts.push({
+            inlineData: {
+              mimeType: file.mimeType,
+              data: file.base64,
+            },
+          });
+        } else if (file.mimeType.startsWith("text/")) {
+          try {
+            // Check if running in browser or Node
+            let textContent = "";
+            if (typeof atob === "function") {
+              textContent = decodeURIComponent(escape(atob(file.base64)));
+            } else if (typeof Buffer !== "undefined") {
+              textContent = Buffer.from(file.base64, "base64").toString("utf-8");
+            }
+            if (textContent) {
+              parts.push({
+                text: `[Nội dung file đính kèm: ${file.name}]\n${textContent}\n`,
+              });
+            }
+          } catch {
+            // fallback
+          }
+        }
+      }
+    }
+  }
+
+  const promptText = `Sau đây là thông tin bài toán và code C++ của học sinh cần chấm và phân tích:
+
+=== ĐỀ BÀI (PROBLEM STATEMENT) ===
+${hasProblemText ? problemText : "(Chi tiết đề bài nằm trong file đính kèm phía trên)"}
+
+=== CODE C++ CỦA HỌC SINH (STUDENT C++ CODE) ===
+\`\`\`cpp
+${codeText}
+\`\`\`
+
+YÊU CẦU QUAN TRỌNG VỀ MỤC 5 (CODE FULL AC):
+- Bạn PHẢI tuyệt đối giữ nguyên tên biến (như các biến n, m, a, b, res, ans, dp, tong, dem...) và phong cách viết code gốc của học sinh.
+- KHÔNG thay thế bằng phong cách viết hoàn toàn mới hay đặt lại tên biến khác lạ.
+- Nếu cần đặt biến mới, chỉ dùng biến 1-3 ký tự quen thuộc của học sinh (i, j, k, vt, tam, dau, cuoi, ans, res, tong, dem...).
+- Chỉ sửa đúng các vị trí lỗi (sửa kiểu dữ liệu tràn số, sửa mảng, sửa điều kiện lặp, tối ưu thuật toán trên nền code học sinh), giữ nguyên khung chương trình của học sinh kèm comment giải thích rõ ràng tại các dòng sửa.
+
+Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấu trúc 5 mục được yêu cầu. Chú ý sử dụng công thức toán LaTeX định dạng $công_thức$ cho các biểu thức toán và độ phức tạp $O(...)$. Trong mục 5, hãy cung cấp mã nguồn C++ hoàn chỉnh đặt trong khối \`\`\`cpp ... \`\`\`.`;
+
+  parts.push({ text: promptText });
+
+  return parts;
+}
+
+/**
+ * Execute Gemini analysis directly from client or serverless function with multi-model fallback.
+ */
+export async function executeDirectGeminiAnalysis(
+  payload: AnalyzePayload,
+  apiKey: string
+): Promise<{ success: boolean; model: string; analysis: string }> {
+  if (!apiKey) {
+    throw new Error("Chưa cấu hình Gemini API Key. Vui lòng vào Cài đặt (bánh răng) để nhập API Key của bạn.");
+  }
+
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
+
+  const parts = buildGeminiPayload(payload);
+
+  // Dynamic fallback model chain: Starts with requested model or newest flash, then steps down
+  const requested = payload.model || "gemini-2.5-flash";
+  const candidateModels = Array.from(
+    new Set([
+      requested,
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash",
+      "gemini-2.5-pro",
+      "gemini-3.8-flash",
+      "gemini-3.1-flash-lite",
+    ])
+  );
+
+  let lastError: any = null;
+
+  for (const candidate of candidateModels) {
+    try {
+      console.log(`[Gemini Optimizer] Trying model: ${candidate}...`);
+      const response = await ai.models.generateContent({
+        model: candidate,
+        contents: { parts },
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.2,
+        },
+      });
+
+      const analysis = response.text || "";
+      if (analysis) {
+        return {
+          success: true,
+          model: candidate,
+          analysis,
+        };
+      }
+    } catch (err: any) {
+      lastError = err;
+      const errStr = err?.message || "";
+      const isRetryable =
+        errStr.includes("429") ||
+        errStr.includes("RESOURCE_EXHAUSTED") ||
+        errStr.includes("Quota exceeded") ||
+        errStr.includes("503") ||
+        errStr.includes("404") ||
+        errStr.includes("UNAVAILABLE") ||
+        errStr.includes("high demand") ||
+        errStr.includes("overloaded") ||
+        errStr.includes("no longer available");
+
+      if (isRetryable) {
+        console.warn(
+          `[Gemini Optimizer] Model ${candidate} returned retryable error: ${errStr.slice(0, 100)}. Falling back to next model...`
+        );
+        continue;
+      } else {
+        // Fatal error like invalid API key
+        throw err;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error("Không nhận được phản hồi từ các mô hình Gemini.");
+}
