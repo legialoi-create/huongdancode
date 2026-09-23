@@ -1,12 +1,13 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
   const app = express();
@@ -94,8 +95,14 @@ Nhiệm vụ của bạn là nhận đề bài và code C++ của học sinh, sa
 - **Độ phức tạp & TLE:** Giải thích vì sao thuật toán hiện tại bị quá thời gian chạy.
 - **Tối ưu I/O:** \`ios_base::sync_with_stdio(0); cin.tie(0);\` và tránh dùng \`endl\`.
 
-### 4. Hướng dẫn sửa chi tiết
-- Giải thích cặn kẽ vì sao cách làm cũ bị sai và tư duy cải tiến từng bước rõ ràng để học sinh hiểu bản chất.
+### 4. Hướng dẫn sửa từng bước & Tư duy thuật toán
+- **Giải thích cặn kẽ bản chất:** Phân tích lý do vì sao cách làm cũ/ngây thơ bị quá thời gian (TLE) hoặc sai đáp án (WA), từ đó dẫn dắt học sinh tới tư duy tối ưu một cách tự nhiên, sư phạm và dễ hiểu nhất.
+- **Công thức Toán học chuẩn xác (LaTeX $...$):** Mọi biểu thức toán học, công thức mảng tiền tố, giá trị lớn nhất/nhỏ nhất, hệ thức truy hồi hay độ phức tạp BẮT BUỘC viết đúng chuẩn LaTeX trong cặp dấu $...$ (ví dụ: $pre[i] = pre[i-1] + a[i]$, $\max_{j=i+K-1}^N pre[j]$, $O(N \log N)$). Tuyệt đối không viết nối chữ text thường lặp lại.
+- **Hướng dẫn từng bước (Step-by-Step):**
+  + **Bước 1: Chuyển đổi bài toán & Thiết lập công thức toán:** Biến đổi yêu cầu đề bài thành biểu thức toán hoặc bài toán tối ưu cụ thể.
+  + **Bước 2: Lựa chọn phương pháp & Cấu trúc dữ liệu:** Chỉ rõ kỹ thuật tối ưu phù hợp (Prefix Sum, Hai con trỏ Two Pointers, Tìm kiếm nhị phân Binary Search, Quy hoạch động DP, Mảng hậu tố Suffix Max/Min, Monotonic Queue/Stack...).
+  + **Bước 3: Các bước thực hiện chi tiết:** Hướng dẫn từng bước cách khởi tạo mảng, xử lý dữ liệu và tính toán kết quả kèm ví dụ minh họa ngắn gọn với test nhỏ để học sinh dễ hình dung.
+  + **Bước 4: Đánh giá độ phức tạp:** Đưa ra độ phức tạp thời gian $O(...)$ và bộ nhớ $O(...)$ để khẳng định giải pháp đạt Full 100/100 điểm.
 
 ### 5. Mã nguồn C++ hoàn thiện (Full AC)
 **QUY TẮC BẮT BUỘC VỀ CODE FULL AC (TAB 4):**
@@ -255,16 +262,19 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
   });
 
   // Vite middleware for dev or static serving for prod
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), "dist");
+  const isProd = process.env.NODE_ENV === "production" || fs.existsSync(path.join(distPath, "index.html"));
+
+  if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/")) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

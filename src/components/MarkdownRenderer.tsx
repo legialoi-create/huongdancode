@@ -7,36 +7,59 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
-// Function to render math in text with KaTeX
-function renderMathInText(text: string): string {
-  if (!text) return "";
+// Function to process markdown text containing KaTeX math expressions securely
+function formatTextWithMath(rawText: string): string {
+  if (!rawText) return "";
 
-  // Replace $$ block math $$
-  let processed = text.replace(/\$\$([\s\S]+?)\$\$/g, (_match, expr) => {
+  // 1. Stash Math expressions into placeholders to protect from markdown regex corruption
+  const mathPlaceholders: string[] = [];
+
+  // Protect block math $$...$$
+  let text = rawText.replace(/\$\$([\s\S]+?)\$\$/g, (_match, expr) => {
+    let rendered = "";
     try {
-      return `<div class="katex-display my-3 overflow-x-auto py-1 px-3 bg-slate-900/60 rounded-md border border-slate-800 text-center">${katex.renderToString(
+      rendered = `<div class="katex-display my-3 overflow-x-auto py-1 px-3 bg-slate-900/60 rounded-md border border-slate-800 text-center">${katex.renderToString(
         expr.trim(),
-        { displayMode: true, throwOnError: false }
+        { displayMode: true, throwOnError: false, output: "html" }
       )}</div>`;
     } catch {
-      return expr;
+      rendered = `$$${expr}$$`;
     }
+    const idx = mathPlaceholders.length;
+    mathPlaceholders.push(rendered);
+    return `@@MATH_BLOCK_${idx}@@`;
   });
 
-  // Replace $ inline math $ (avoid matching single dollar signs like $100 or currency)
-  // Ensure the math doesn't start or end with a space
-  processed = processed.replace(/(?<!\\)\$([^\$\n\r]+?)\$/g, (_match, expr) => {
+  // Protect inline math $...$ (ensure not escaped with \$)
+  text = text.replace(/(?<!\\)\$([^\$\n\r]+?)\$/g, (_match, expr) => {
+    let rendered = "";
     try {
-      return katex.renderToString(expr.trim(), {
+      rendered = katex.renderToString(expr.trim(), {
         displayMode: false,
         throwOnError: false,
+        output: "html",
       });
     } catch {
-      return expr;
+      rendered = `$${expr}$`;
     }
+    const idx = mathPlaceholders.length;
+    mathPlaceholders.push(rendered);
+    return `@@MATH_INLINE_${idx}@@`;
   });
 
-  return processed;
+  // 2. Parse inline Markdown on safe non-math text
+  let html = text
+    .replace(/\*\*(.*?)\*\*/g, "<strong class='text-white font-semibold'>$1</strong>")
+    .replace(/(?<!\*)\*([^\*]+?)\*(?!\*)/g, "<em class='text-slate-200 italic'>$1</em>")
+    .replace(/`([^`]+)`/g, "<code class='px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 text-xs font-mono font-medium border border-slate-700/50'>$1</code>");
+
+  // 3. Restore all Math placeholders with rendered KaTeX HTML
+  html = html.replace(/@@MATH_(?:BLOCK|INLINE)_(\d+)@@/g, (_match, idxStr) => {
+    const idx = parseInt(idxStr, 10);
+    return mathPlaceholders[idx] || "";
+  });
+
+  return html;
 }
 
 export const CodeBlock: React.FC<{ code: string; language?: string }> = ({
@@ -230,7 +253,7 @@ function renderFormattedText(text: string): React.ReactNode[] {
         <h3
           key={i}
           className="text-lg md:text-xl font-bold text-indigo-300 mt-4 mb-2 flex items-center gap-2 border-b border-slate-800/80 pb-1.5"
-          dangerouslySetInnerHTML={{ __html: renderMathInText(title) }}
+          dangerouslySetInnerHTML={{ __html: formatTextWithMath(title) }}
         />
       );
       continue;
@@ -242,7 +265,7 @@ function renderFormattedText(text: string): React.ReactNode[] {
         <h2
           key={i}
           className="text-xl md:text-2xl font-extrabold text-white mt-5 mb-2 flex items-center gap-2 border-b border-slate-700/60 pb-2"
-          dangerouslySetInnerHTML={{ __html: renderMathInText(title) }}
+          dangerouslySetInnerHTML={{ __html: formatTextWithMath(title) }}
         />
       );
       continue;
@@ -254,21 +277,21 @@ function renderFormattedText(text: string): React.ReactNode[] {
         <h1
           key={i}
           className="text-2xl md:text-3xl font-extrabold text-white mt-6 mb-3"
-          dangerouslySetInnerHTML={{ __html: renderMathInText(title) }}
+          dangerouslySetInnerHTML={{ __html: formatTextWithMath(title) }}
         />
       );
       continue;
     }
 
     // Bullet list items
-    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-      const itemContent = trimmed.replace(/^[-*]\s+/, "");
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ")) {
+      const itemContent = trimmed.replace(/^[-*•]\s+/, "");
       nodes.push(
         <li
           key={i}
           className="ml-5 list-disc text-slate-300 pl-1 leading-relaxed marker:text-indigo-400"
           dangerouslySetInnerHTML={{
-            __html: parseInlineMarkdown(renderMathInText(itemContent)),
+            __html: formatTextWithMath(itemContent),
           }}
         />
       );
@@ -286,7 +309,7 @@ function renderFormattedText(text: string): React.ReactNode[] {
           <div
             className="text-slate-300 leading-relaxed"
             dangerouslySetInnerHTML={{
-              __html: parseInlineMarkdown(renderMathInText(numMatch[2])),
+              __html: formatTextWithMath(numMatch[2]),
             }}
           />
         </div>
@@ -300,19 +323,11 @@ function renderFormattedText(text: string): React.ReactNode[] {
         key={i}
         className="text-slate-300 leading-relaxed"
         dangerouslySetInnerHTML={{
-          __html: parseInlineMarkdown(renderMathInText(rawLine)),
+          __html: formatTextWithMath(rawLine),
         }}
       />
     );
   }
 
   return nodes;
-}
-
-// Convert inline markdown like **bold**, *italic*, `code` to HTML
-function parseInlineMarkdown(str: string): string {
-  return str
-    .replace(/\*\*(.*?)\*\*/g, "<strong class='text-white font-semibold'>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em class='text-slate-200 italic'>$1</em>")
-    .replace(/`([^`]+)`/g, "<code class='px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 text-xs font-mono font-medium border border-slate-700/50'>$1</code>");
 }
