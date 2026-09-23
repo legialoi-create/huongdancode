@@ -1,0 +1,6 @@
+{
+  "name": "Trợ lý Phân tích Thuật toán & Tối ưu Lập trình",
+  "description": "AI Code Reviewer & Assistant for C++ Competitive Programming. Phân tích đề bài, chỉ rõ lỗi tràn số, TLE, logic và cung cấp code chuẩn Full AC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
