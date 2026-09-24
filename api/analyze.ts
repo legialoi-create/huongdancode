@@ -1,7 +1,152 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import mammoth from "mammoth";
+import JSZip from "jszip";
+
+function unescapeXml(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function extractTextFromParagraph(pXml: string): string {
+  const processed = pXml
+    .replace(/<w:br(?:\s[^>]*)?\/>/g, "\n")
+    .replace(/<w:cr(?:\s[^>]*)?\/>/g, "\n")
+    .replace(/<w:tab(?:\s[^>]*)?\/>/g, "    ");
+
+  const tMatches = processed.match(/<(?:w|m):t(?:\s[^>]*)?>([\s\S]*?)<\/(?:w|m):t>/g) || [];
+  return tMatches
+    .map((t) => unescapeXml(t.replace(/^<(?:w|m):t(?:\s[^>]*)?>/, "").replace(/<\/(?:w|m):t>$/, "")))
+    .join("");
+}
+
+function parseDocxXml(xml: string): string {
+  const elements: string[] = [];
+  const bodyMatch = xml.match(/<w:body(?:\s[^>]*)?>([\s\S]*?)<\/w:body>/);
+  const bodyXml = bodyMatch ? bodyMatch[1] : xml;
+
+  const blockRegex = /(<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>|<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = blockRegex.exec(bodyXml)) !== null) {
+    const blockXml = match[1];
+    if (blockXml.startsWith("<w:tbl")) {
+      const rows: string[][] = [];
+      const trMatches = blockXml.match(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g) || [];
+      for (const trXml of trMatches) {
+        const cells: string[] = [];
+        const tcMatches = trXml.match(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g) || [];
+        for (const tcXml of tcMatches) {
+          const pList = tcXml.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g) || [];
+          const cellText = pList.map(extractTextFromParagraph).filter((t) => t.trim().length > 0).join(" ");
+          cells.push(cellText.trim().replace(/\|/g, "\\|"));
+        }
+        if (cells.length > 0) rows.push(cells);
+      }
+      if (rows.length > 0) {
+        const maxCols = Math.max(...rows.map((r) => r.length));
+        const normalizedRows = rows.map((r) => {
+          const rowCopy = [...r];
+          while (rowCopy.length < maxCols) rowCopy.push("");
+          return rowCopy;
+        });
+        const header = "| " + normalizedRows[0].join(" | ") + " |";
+        const separator = "| " + normalizedRows[0].map(() => "---").join(" | ") + " |";
+        const body = normalizedRows.slice(1).map((r) => "| " + r.join(" | ") + " |").join("\n");
+        elements.push(header + "\n" + separator + (body ? "\n" + body : ""));
+      }
+    } else {
+      const pText = extractTextFromParagraph(blockXml).trim();
+      if (pText) elements.push(pText);
+    }
+  }
+  return elements.join("\n\n");
+}
+
+async function extractWordFromBuffer(buf: Buffer, fileName: string): Promise<string> {
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  const isZip = buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04;
+
+  if (ext === "docx" || isZip) {
+    try {
+      const zip = await JSZip.loadAsync(buf);
+      const docXml = zip.file("word/document.xml");
+      if (docXml) {
+        const xml = await docXml.async("string");
+        const parsed = parseDocxXml(xml);
+        if (parsed.trim().length > 0) return parsed.trim();
+      }
+    } catch (e) {
+      console.warn("JSZip parse error on server:", e);
+    }
+
+    try {
+      const mResult = await mammoth.extractRawText({ buffer: buf });
+      if (mResult && mResult.value && mResult.value.trim().length > 0) {
+        return mResult.value.trim();
+      }
+    } catch {}
+  }
+
+  // Scan .doc binary UTF-16LE / UTF-8
+  try {
+    let utf16Text = "";
+    let currentLine = "";
+    for (let i = 0; i < buf.length - 1; i += 2) {
+      const code = buf[i] | (buf[i + 1] << 8);
+      const isValidChar =
+        (code >= 32 && code <= 126) ||
+        code === 10 ||
+        code === 13 ||
+        code === 9 ||
+        (code >= 0x00c0 && code <= 0x024f) ||
+        (code >= 0x1ea0 && code <= 0x1ef9) ||
+        (code >= 0x2200 && code <= 0x22ff) ||
+        (code >= 0x2010 && code <= 0x2026);
+
+      if (isValidChar) {
+        if (code === 13 || code === 10) {
+          if (currentLine.trim().length > 0) {
+            utf16Text += currentLine.trim() + "\n";
+            currentLine = "";
+          }
+        } else {
+          currentLine += String.fromCharCode(code);
+        }
+      } else {
+        if (currentLine.trim().length >= 3) {
+          utf16Text += currentLine.trim() + "\n";
+        }
+        currentLine = "";
+      }
+    }
+    const lines16 = utf16Text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length >= 3);
+    if (lines16.length >= 2) return lines16.join("\n");
+
+    const cleanLines = buf
+      .toString("utf-8")
+      .replace(/[^\x20-\x7E\xC0-\xFF\u0102\u0103\u0110\u0111\u0128\u0129\u0168\u0169\u01A0\u01A1\u01AF\u01B0\u1EA0-\u1EF9\n\r\t]/g, "\n")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length >= 5);
+    if (cleanLines.length >= 2) return cleanLines.join("\n");
+  } catch {}
+
+  return "";
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const SYSTEM_INSTRUCTION = `Bạn là chuyên gia lập trình thi đấu (Competitive Programming) và giáo viên bồi dưỡng học sinh giỏi Tin học hàng đầu.
-Nhiệm vụ của bạn là nhận đề bài và code C++ của học sinh, sau đó phân tích và xuất kết quả chuẩn Markdown theo đúng 5 mục:
+Nhiệm vụ của bạn là nhận đề bài, code C++ của học sinh và (nếu có) bộ test chấm Themis, sau đó phân tích và xuất kết quả chuẩn Markdown theo đúng 6 mục:
 
 ⚠️ QUY TẮC ĐẶC BIỆT - KIỂM TRA ĐỘ TƯƠNG QUAN GIỮA ĐỀ VÀ CODE:
 - Trước tiên, hãy đối chiếu kỹ đề bài (hoặc hình ảnh/tệp đề) và code C++ nộp lên.
@@ -31,7 +176,7 @@ Nhiệm vụ của bạn là nhận đề bài và code C++ của học sinh, sa
 
 ### 4. Hướng dẫn sửa từng bước & Tư duy thuật toán
 - **Giải thích cặn kẽ bản chất:** Phân tích lý do vì sao cách làm cũ/ngây thơ bị quá thời gian (TLE) hoặc sai đáp án (WA), từ đó dẫn dắt học sinh tới tư duy tối ưu một cách tự nhiên, sư phạm và dễ hiểu nhất.
-- **Công thức Toán học chuẩn xác (LaTeX $...$):** Mọi biểu thức toán học, công thức mảng tiền tố, giá trị lớn nhất/nhỏ nhất, hệ thức truy hồi hay độ phức tạp BẮT BUỘC viết đúng chuẩn LaTeX trong cặp dấu $...$ (ví dụ: $pre[i] = pre[i-1] + a[i]$, $\max_{j=i+K-1}^N pre[j]$, $O(N \log N)$). Tuyệt đối không viết nối chữ text thường lặp lại.
+- **Công thức Toán học chuẩn xác (LaTeX $...$):** Mọi biểu thức toán học, công thức mảng tiền tố, giá trị lớn nhất/nhỏ nhất, hệ thức truy hồi hay độ phức tạp BẮT BUỘC viết đúng chuẩn LaTeX trong cặp dấu $...$ (ví dụ: $pre[i] = pre[i-1] + a[i]$, $\max_{j=i+K-1}^N pre[j]$, $O(N \log N)$).
 - **Hướng dẫn từng bước (Step-by-Step):**
   + **Bước 1: Chuyển đổi bài toán & Thiết lập công thức toán:** Biến đổi yêu cầu đề bài thành biểu thức toán hoặc bài toán tối ưu cụ thể.
   + **Bước 2: Lựa chọn phương pháp & Cấu trúc dữ liệu:** Chỉ rõ kỹ thuật tối ưu phù hợp (Prefix Sum, Hai con trỏ Two Pointers, Tìm kiếm nhị phân Binary Search, Quy hoạch động DP, Mảng hậu tố Suffix Max/Min, Monotonic Queue/Stack...).
@@ -43,9 +188,18 @@ Nhiệm vụ của bạn là nhận đề bài và code C++ của học sinh, sa
 1. **CHUẨN FILE I/O THEO ĐÚNG ĐỀ BÀI**: Nếu đề bài yêu cầu tệp vào/ra (ví dụ \`BAI1.INP\` / \`BAI1.OUT\`), code Full AC BẮT BUỘC phải có cặp lệnh \`freopen("BAI1.INP", "r", stdin); freopen("BAI1.OUT", "w", stdout);\` đúng chuẩn thi HSG. Nếu trong code học sinh đã có dòng freopen thì giữ nguyên tên file đó hoặc sửa đúng theo đề.
 2. **PHONG CÁCH HỌC SINH ĐI THI (MỘC MẠC, TRỰC DIỆN, HIỆU QUẢ)**: Viết code theo đúng tư duy và thói quen làm bài thực tế của học sinh thi HSG/Competitive Programming (mộc mạc, ngắn gọn, dễ đọc, trực diện, không rườm rà).
 3. **GIỮ NGUYÊN 100% TÊN BIẾN CỦA HỌC SINH (KHI CODE KHỚP ĐỀ)**: Tuyệt đối KHÔNG tự ý đổi tên biến quen thuộc của học sinh (kể cả tên biến viết tắt hay không chuẩn tiếng Anh như \`a, b, res, ans, dp, tong, dem, n, m, k, f, s, d, cnt, vt, tam, dau, cuoi\`...).
-4. **QUY TẮC ĐẶT BIẾN MỚI (NẾU CẦN THÊM HOẶC KHI VIẾT CODE MỚI CHO ĐỀ)**: Biến mới BẮT BUỘC phải ngắn gọn từ 1 đến 3 ký tự và mang phong cách Việt hóa / chữ cái quen thuộc của học sinh (ví dụ: \`i, j, k, n, m, s, d, dem, tong, ans, res, vt, tam, dau, cuoi, max, min, l, r, mid\`...). TUYỆT ĐỐI KHÔNG dùng tên biến tiếng Anh học thuật dài dòng hay chuẩn clean code doanh nghiệp phức tạp (tránh đặt kiểu \`totalAccumulator\`, \`studentResultIndex\`, \`temporaryStorage\`...).
+4. **QUY TẮC ĐẶT BIẾN MỚI (NẾU CẦN THÊM HOẶC KHI VIẾT CODE MỚI CHO ĐỀ)**: Biến mới BẮT BUỘC phải ngắn gọn từ 1 đến 3 ký tự và mang phong cách Việt hóa / chữ cái quen thuộc của học sinh (ví dụ: \`i, j, k, n, m, s, d, dem, tong, ans, res, vt, tam, dau, cuoi, max, min, l, r, mid\`...).
 5. **CHÚ THÍCH CỤ THỂ TỪNG DÒNG SỬA**: Đặt comment ngắn gọn, rõ ràng ngay tại các dòng code đã được sửa/thêm mới để học sinh đối chiếu thấy ngay điểm khác biệt giữa code cũ và code mới.
-6. **FULL AC 100%**: Code phải hoàn chỉnh, có đầy đủ \`#include\`, tối ưu Fast I/O và sẵn sàng nộp chấm đạt tối đa 100 điểm.`;
+6. **FULL AC 100%**: Code phải hoàn chỉnh, có đầy đủ \`#include\`, tối ưu Fast I/O và sẵn sàng nộp chấm đạt tối đa 100 điểm.
+
+### 6. Thẩm định Bộ Test Themis & Tiêu chí Chấm
+Đánh giá chất lượng của bộ test hiện có theo 6 tiêu chuẩn vàng:
+1. **Đúng / Sai & Chuẩn xác:** Đáp án test có chuẩn không? Có test ví dụ đề bài không? BẮT BUỘC CHỐT RÕ RÀNG DÒNG: **"🎯 Chốt kết quả: Đúng X/Y test chuẩn xác (Z%)"** (Đưa ra con số cụ thể số test hợp lệ, đúng đáp án / tổng số test đang có).
+2. **Có Test Đặc biệt không? Có Test Biên không?** ($N_{min}, N_{max}$, số âm, số 0, bẫy tràn số 32-bit buộc dùng long long).
+3. **Phân chia Subtask:** Có đủ các mức $N$ cho vét cạn và full tối ưu không?
+4. **Test Bẫy Logic, Anti-Greedy & Chống TLE:** Chống thuật toán tham lam sai, chống quicksort suy biến.
+5. **Định dạng chuẩn Themis/CMS:** Tên file, ký tự ngắt dòng.
+6. **Mô phỏng kết quả chấm từng Test & Đề xuất bổ sung:** Test nào học sinh ăn điểm, test nào dính WA/TLE/Overflow, CHỐT RÕ: **"⚡ Chốt kết quả chấm: Đạt X/Y test (X0/100 điểm)"**.`;
 
 export default async function handler(req: any, res: any) {
   // Set CORS headers
@@ -72,17 +226,17 @@ export default async function handler(req: any, res: any) {
       problemFiles,
       codeText,
       userApiKey,
-      model = "gemini-2.5-flash",
+      model = "gemini-3.8-flash",
+      testCases,
     } = req.body || {};
 
-    if (!codeText || typeof codeText !== "string" || !codeText.trim()) {
-      return res.status(400).json({ error: "Vui lòng nhập mã nguồn C++ của học sinh." });
-    }
-
+    const hasCodeText = codeText && typeof codeText === "string" && codeText.trim().length > 0;
     const hasProblemText = problemText && typeof problemText === "string" && problemText.trim().length > 0;
     const hasProblemFiles = Array.isArray(problemFiles) && problemFiles.length > 0;
+    const hasTestCases = Array.isArray(testCases) && testCases.length > 0;
 
-    if (!hasProblemText && !hasProblemFiles) {
+    // Must have at least the problem statement or problem files or test cases
+    if (!hasProblemText && !hasProblemFiles && !hasTestCases) {
       return res.status(400).json({ error: "Vui lòng cung cấp đề bài (nhập văn bản hoặc tải file đính kèm)." });
     }
 
@@ -109,60 +263,95 @@ export default async function handler(req: any, res: any) {
 
     if (hasProblemFiles) {
       for (const file of problemFiles) {
-        if (file.base64 && file.mimeType) {
-          if (
-            file.mimeType.startsWith("image/") ||
-            file.mimeType === "application/pdf"
-          ) {
+        const ext = file.name.split(".").pop()?.toLowerCase() || "";
+        let normMime = file.mimeType;
+        if (ext === "pdf") normMime = "application/pdf";
+        else if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) normMime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        else if (["txt", "inp", "out", "cpp", "c", "py", "pas", "md", "csv", "log"].includes(ext)) normMime = "text/plain";
+
+        // 1. If text was extracted from file (Word .docx/.doc, PDF, or text file)
+        if (file.extractedText && file.extractedText.trim().length > 0) {
+          parts.push({
+            text: `\n=== NỘI DUNG VĂN BẢN TRÍCH XUẤT TỪ FILE ĐÍNH KÈM [${file.name}] ===\n${file.extractedText.trim()}\n=== HẾT NỘI DUNG FILE [${file.name}] ===\n`,
+          });
+        }
+
+        // 2. Images or PDF: send inlineData for multimodal processing
+        if (normMime.startsWith("image/") || normMime === "application/pdf") {
+          if (file.base64) {
             parts.push({
               inlineData: {
-                mimeType: file.mimeType,
+                mimeType: normMime,
                 data: file.base64,
               },
             });
-          } else if (file.mimeType.startsWith("text/")) {
-            try {
-              const textContent = Buffer.from(file.base64, "base64").toString("utf-8");
+          }
+        }
+        // 3. Fallback for Word .docx / .doc if extractedText was missing
+        else if (!file.extractedText && (ext === "docx" || ext === "doc" || normMime.includes("word") || normMime.includes("msword"))) {
+          try {
+            const buf = Buffer.from(file.base64, "base64");
+            const wordText = await extractWordFromBuffer(buf, file.name);
+            if (wordText && wordText.trim().length > 0) {
               parts.push({
-                text: `[Nội dung file đính kèm: ${file.name}]\n${textContent}\n`,
+                text: `\n=== NỘI DUNG TRÍCH XUẤT TỪ FILE WORD [${file.name}] ===\n${wordText.trim()}\n=== HẾT FILE WORD [${file.name}] ===\n`,
               });
-            } catch {
-              // ignore
             }
+          } catch (docxErr) {
+            console.warn("Lỗi đọc Word docx/doc trên server:", docxErr);
+          }
+        }
+        // 4. Fallback for text files if extractedText was missing
+        else if (!file.extractedText && (normMime.startsWith("text/") || ["txt", "inp", "out", "cpp", "c", "py", "md"].includes(ext))) {
+          try {
+            const textContent = Buffer.from(file.base64, "base64").toString("utf-8");
+            if (textContent) {
+              parts.push({
+                text: `\n=== NỘI DUNG FILE VĂN BẢN [${file.name}] ===\n${textContent}\n=== HẾT FILE [${file.name}] ===\n`,
+              });
+            }
+          } catch {
+            // ignore
           }
         }
       }
     }
 
-    const promptText = `Sau đây là thông tin bài toán và code C++ của học sinh cần chấm và phân tích:
+    let testCasesBlock = "";
+    if (hasTestCases) {
+      const formatted = testCases
+        .map((t: any, i: number) => {
+          return `Test ${(i + 1).toString().padStart(2, "0")} [${t.category || "General"}]:\n- INPUT:\n${t.input}\n- OUTPUT CHUẨN:\n${t.expectedOutput}${t.description ? `\n- Mục đích: ${t.description}` : ""}`;
+        })
+        .join("\n\n");
+      testCasesBlock = `\n\n=== BỘ TEST THEMIS HIỆN CÓ (${testCases.length} TESTCASES) ===\n${formatted}\n\nHÃY THẨM ĐỊNH BỘ TEST NÀY THEO 6 TIÊU CHÍ VÀNG Ở MỤC 6: 1. Đúng/Sai 2. Test đặc biệt & Test biên (N=0, 1, cực đại, số âm, bẫy tràn số int64) 3. Subtask 4. Bẫy TLE & Anti-hack 5. Format Themis 6. Đề xuất bổ sung test thiếu.`;
+    }
+
+    const studentCodeSection = hasCodeText
+      ? `=== CODE C++ CỦA HỌC SINH / MÃ NGUỒN THỬ NGHIỆM ===\n\`\`\`cpp\n${codeText}\n\`\`\`\n(Lưu ý: Mã nguồn này có thể là code đang giải dở, dính TLE/WA, hoặc chưa phải code chuẩn AC. Hãy thẩm định bộ test xem bộ test có phát hiện được lỗi trong code này không, và viết lại Code Chuẩn Full AC hoàn thiện)`
+      : `=== MÃ NGUỒN C++ ===\n(Hiện tại chưa cung cấp mã nguồn hoặc người dùng chưa có code chuẩn. Hãy thẩm định bộ test độc lập dựa trên Đề bài theo 6 tiêu chuẩn, tự động tính toán output chuẩn cho từng test để kiểm tra tính đúng/sai của test, và viết mã nguồn C++ Full AC hoàn thiện đạt 100/100 điểm làm chuẩn đối chiếu)`;
+
+    const promptText = `Sau đây là thông tin bài toán, mã nguồn C++ (nếu có) và bộ test chấm Themis:
 
 === ĐỀ BÀI (PROBLEM STATEMENT) ===
 ${hasProblemText ? problemText : "(Chi tiết đề bài nằm trong file đính kèm phía trên)"}
 
-=== CODE C++ CỦA HỌC SINH (STUDENT C++ CODE) ===
-\`\`\`cpp
-${codeText}
-\`\`\`
+${studentCodeSection}${testCasesBlock}
 
-YÊU CẦU QUAN TRỌNG VỀ MỤC 5 (CODE FULL AC):
-- Bạn PHẢI tuyệt đối giữ nguyên tên biến (như các biến n, m, a, b, res, ans, dp, tong, dem...) và phong cách viết code gốc của học sinh.
-- KHÔNG thay thế bằng phong cách viết hoàn toàn mới hay đặt lại tên biến khác lạ.
-- Nếu cần đặt biến mới, chỉ dùng biến 1-3 ký tự quen thuộc của học sinh (i, j, k, vt, tam, dau, cuoi, ans, res, tong, dem...).
-- Chỉ sửa đúng các vị trí lỗi, giữ nguyên khung chương trình của học sinh kèm comment giải thích rõ ràng tại các dòng sửa.
+YÊU CẦU QUAN TRỌNG:
+- Ở Mục 5 (CODE FULL AC): Viết mã nguồn C++ hoàn chỉnh đạt 100/100 điểm, có đầy đủ #include, freopen và fast I/O. Nếu có code học sinh gửi kèm, giữ nguyên tên biến và phong cách của học sinh, chỉ sửa đúng vị trí lỗi kèm chú thích. Nếu chưa có code gửi kèm, viết code chuẩn chỉnh, mộc mạc và tối ưu cho đề bài.
+- Ở Mục 6 (THẨM ĐỊNH BỘ TEST THEMIS): Dù CÓ CODE hay KHÔNG CÓ CODE CHUẨN, hãy thẩm định kỹ càng bộ test theo 6 tiêu chuẩn (1. Đúng/Sai 2. Test đặc biệt & Test biên N=1, Nmax, tràn số int64 3. Subtask 4. Bẫy TLE & Anti-hack 5. Định dạng Themis 6. Độ bao phủ & đề xuất test thiếu). Đưa ra nhận xét cụ thể và số điểm đánh giá cho bộ test.
 
-Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấu trúc 5 mục được yêu cầu. Chú ý sử dụng công thức toán LaTeX định dạng $công_thức$ cho các biểu thức toán và độ phức tạp $O(...)$. Trong mục 5, hãy cung cấp mã nguồn C++ hoàn chỉnh đặt trong khối \`\`\`cpp ... \`\`\`.`;
+Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấu trúc 6 mục được yêu cầu. Chú ý sử dụng công thức toán LaTeX định dạng $công_thức$ cho các biểu thức toán và độ phức tạp $O(...)$. Trong mục 5, hãy cung cấp mã nguồn C++ hoàn chỉnh đặt trong khối \`\`\`cpp ... \`\`\`.`;
 
     parts.push({ text: promptText });
 
-    const requestedModel = model || "gemini-2.5-flash";
+    const requestedModel = model || "gemini-3.8-flash";
     const candidateModels = Array.from(
       new Set([
         requestedModel,
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-2.5-pro",
         "gemini-3.8-flash",
+        "gemini-flash-latest",
         "gemini-3.1-flash-lite",
       ])
     );
@@ -171,37 +360,59 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
     let usedModel = requestedModel;
     let lastError: any = null;
 
-    for (const candidate of candidateModels) {
+    for (let i = 0; i < candidateModels.length; i++) {
+      const candidate = candidateModels[i];
+      let modelSuccess = false;
+
       try {
+        const modelConfig: any = {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.2,
+        };
+
+        if (candidate.includes("flash-lite")) {
+          modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+        } else if (candidate.includes("3.8-flash") || candidate.includes("3.1")) {
+          modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+        }
+
         response = await ai.models.generateContent({
           model: candidate,
           contents: { parts },
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.2,
-          },
+          config: modelConfig,
         });
+
         usedModel = candidate;
-        break;
+        modelSuccess = true;
       } catch (candidateErr: any) {
         lastError = candidateErr;
         const errStr = candidateErr?.message || "";
-        const isRetryable =
-          errStr.includes("429") ||
-          errStr.includes("RESOURCE_EXHAUSTED") ||
-          errStr.includes("Quota exceeded") ||
+        const isDemandSpike =
           errStr.includes("503") ||
-          errStr.includes("404") ||
           errStr.includes("UNAVAILABLE") ||
           errStr.includes("high demand") ||
-          errStr.includes("overloaded") ||
+          errStr.includes("overloaded");
+        const isQuotaExceeded =
+          errStr.includes("429") ||
+          errStr.includes("RESOURCE_EXHAUSTED") ||
+          errStr.includes("Quota exceeded");
+        const isNotFound =
+          errStr.includes("404") ||
+          errStr.includes("not found") ||
           errStr.includes("no longer available");
 
-        if (isRetryable) {
+        if (isDemandSpike || isQuotaExceeded || isNotFound) {
+          console.warn(
+            `Model ${candidate} encountered transient issue (${errStr.slice(0, 100)}). Automatically switching to next candidate model...`
+          );
           continue;
         } else {
           throw candidateErr;
         }
+      }
+
+      if (modelSuccess && response) {
+        break;
       }
     }
 
@@ -233,7 +444,9 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
     }
 
     let userFriendlyMessage = rawMsg;
-    if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || rawMsg.includes("Quota exceeded")) {
+    if (rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || rawMsg.includes("high demand") || rawMsg.includes("overloaded")) {
+      userFriendlyMessage = "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 Service Unavailable / High Demand). Hệ thống đã tự động thử các mô hình dự phòng nhưng chưa hoàn tất. Vui lòng bấm 'Phân tích' lại sau 5-10 giây.";
+    } else if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || rawMsg.includes("Quota exceeded")) {
       userFriendlyMessage = "Hạn mức API tạm thời chạm giới hạn (Rate limit 429). Vui lòng thử lại sau 30-60 giây hoặc vào Cài đặt để nhập API Key cá nhân của bạn.";
     } else if (rawMsg.includes("API_KEY_INVALID") || rawMsg.includes("API key not valid")) {
       userFriendlyMessage = "Gemini API Key không hợp lệ. Vui lòng kiểm tra lại khóa API trong phần Cài đặt.";

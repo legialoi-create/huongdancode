@@ -14,12 +14,14 @@ interface CodeInputPanelProps {
   codeText: string;
   onChangeCodeText: (code: string) => void;
   onClearCode: () => void;
+  isOptional?: boolean;
 }
 
 export const CodeInputPanel: React.FC<CodeInputPanelProps> = ({
   codeText,
   onChangeCodeText,
   onClearCode,
+  isOptional = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -118,7 +120,14 @@ int main() {
           </div>
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-1.5">
-              2. Code C++ của học sinh
+              <span>2. Code C++</span>
+              {isOptional ? (
+                <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">
+                  Có code hoặc không có code chuẩn đều được
+                </span>
+              ) : (
+                <span className="text-[10px] font-normal text-slate-400">của học sinh</span>
+              )}
             </h2>
           </div>
         </div>
@@ -196,14 +205,19 @@ int main() {
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
-            placeholder={`// Dán mã nguồn C++ của học sinh tại đây...
+            placeholder={
+              isOptional
+                ? `// Có thể dán mã nguồn C++ của học sinh hoặc code kiểm thử tại đây...
+// (LƯU Ý: Có code học sinh, hay chưa có code chuẩn, hoặc để trống, hệ thống VẪN THẨM ĐỊNH ĐƯỢC BỘ TEST độc lập theo đề bài và tự động sinh code AC đối chứng!)`
+                : `// Dán mã nguồn C++ của học sinh tại đây...
 #include <iostream>
 using namespace std;
 
 int main() {
     // Code cần kiểm tra lỗi, TLE hoặc tràn số
     return 0;
-}`}
+}`
+            }
             className="flex-1 p-3.5 bg-transparent text-slate-100 placeholder:text-slate-700 font-mono text-xs sm:text-sm leading-relaxed resize-none focus:outline-none whitespace-pre overflow-x-auto"
           />
         </div>

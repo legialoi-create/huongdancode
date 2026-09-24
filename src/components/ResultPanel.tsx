@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   FileText,
   AlertTriangle,
@@ -14,9 +14,14 @@ import {
   ShieldAlert,
   Clock,
   Zap,
+  ShieldCheck,
+  Target,
+  FolderArchive,
+  RefreshCw,
 } from "lucide-react";
-import { ParsedAnalysis } from "../types";
+import { ParsedAnalysis, ThemisTestCase } from "../types";
 import { MarkdownRenderer, CodeBlock } from "./MarkdownRenderer";
+import { evaluateTestCriteria, downloadThemisZip } from "../utils/testSuiteEvaluator";
 
 interface ResultPanelProps {
   result: ParsedAnalysis | null;
@@ -24,6 +29,10 @@ interface ResultPanelProps {
   error: string | null;
   onRetry: () => void;
   onOpenSettings: () => void;
+  testCases?: ThemisTestCase[];
+  problemCodeName?: string;
+  defaultTab?: 1 | 2 | 3 | 4 | 5;
+  workspaceMode?: "code_analysis" | "test_audit";
 }
 
 export const ResultPanel: React.FC<ResultPanelProps> = ({
@@ -32,10 +41,31 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   error,
   onRetry,
   onOpenSettings,
+  testCases = [],
+  problemCodeName = "BAI",
+  defaultTab = 1,
+  workspaceMode = "code_analysis",
 }) => {
-  const [activeTab, setActiveTab] = useState<1 | 2 | 3 | 4>(1);
+  const [activeTab, setActiveTab] = useState<1 | 2 | 3 | 4 | 5>(defaultTab);
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
+
+  useEffect(() => {
+    if (workspaceMode === "code_analysis" && activeTab === 5) {
+      setActiveTab(1);
+    }
+  }, [workspaceMode, activeTab]);
   const [viewMode, setViewMode] = useState<"tabs" | "full">("tabs");
   const [copiedAc, setCopiedAc] = useState(false);
+
+  const criteriaReport = useMemo(() => {
+    if (testCases.length === 0) return null;
+    return evaluateTestCriteria(testCases, problemCodeName);
+  }, [testCases, problemCodeName]);
 
   // Copy full AC code directly
   const handleCopyAcCode = () => {
@@ -53,7 +83,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "solution_full_ac.cpp";
+    link.download = `${problemCodeName.toLowerCase()}_solution_ac.cpp`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -108,32 +138,59 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
       error.toLowerCase().includes("chưa cấu hình") ||
       error.toLowerCase().includes("cài đặt") ||
       error.toLowerCase().includes("vercel");
+    const isDemandSpike =
+      error.toLowerCase().includes("503") ||
+      error.toLowerCase().includes("quá tải") ||
+      error.toLowerCase().includes("đột biến") ||
+      error.toLowerCase().includes("demand") ||
+      error.toLowerCase().includes("unavailable");
 
     return (
-      <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-rose-950/20 border border-rose-900/60 rounded-2xl min-h-[400px] text-center shadow-xl">
-        <div className="w-14 h-14 rounded-2xl bg-rose-600/20 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-4">
-          <ShieldAlert className="w-7 h-7" />
+      <div
+        className={`flex flex-col items-center justify-center p-8 sm:p-12 ${
+          isDemandSpike
+            ? "bg-amber-950/20 border-amber-900/60"
+            : "bg-rose-950/20 border-rose-900/60"
+        } border rounded-2xl min-h-[400px] text-center shadow-xl`}
+      >
+        <div
+          className={`w-14 h-14 rounded-2xl ${
+            isDemandSpike
+              ? "bg-amber-600/20 border-amber-500/30 text-amber-400"
+              : "bg-rose-600/20 border-rose-500/30 text-rose-400"
+          } border flex items-center justify-center mb-4`}
+        >
+          {isDemandSpike ? <AlertTriangle className="w-7 h-7" /> : <ShieldAlert className="w-7 h-7" />}
         </div>
-        <h3 className="text-lg font-bold text-white mb-2">Đã xảy ra lỗi khi phân tích</h3>
-        <p className="text-xs sm:text-sm text-rose-300/90 max-w-md mb-6 leading-relaxed bg-rose-950/50 p-3.5 rounded-xl border border-rose-800/40">
+        <h3 className="text-lg font-bold text-white mb-2">
+          {isDemandSpike ? "Hệ thống AI tạm thời quá tải (High Demand)" : "Đã xảy ra lỗi khi phân tích"}
+        </h3>
+        <p
+          className={`text-xs sm:text-sm ${
+            isDemandSpike
+              ? "text-amber-200/90 bg-amber-950/50 border-amber-800/40"
+              : "text-rose-300/90 bg-rose-950/50 border-rose-800/40"
+          } max-w-lg mb-6 leading-relaxed p-3.5 rounded-xl border`}
+        >
           {error}
         </p>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={onRetry}
+            className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Thử lại ngay</span>
+          </button>
           {isApiKeyError && (
             <button
               onClick={onOpenSettings}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md active:scale-95 cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 transition-all cursor-pointer"
             >
               Mở Cài đặt API Key
             </button>
           )}
-          <button
-            onClick={onRetry}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 transition-all cursor-pointer"
-          >
-            Thử lại
-          </button>
         </div>
       </div>
     );
@@ -353,6 +410,26 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>Tab 4: Code chuẩn Full AC</span>
           </button>
+
+          {workspaceMode !== "code_analysis" && (
+            <button
+              type="button"
+              onClick={() => setActiveTab(5)}
+              className={`flex items-center gap-2 py-3 px-3 text-xs sm:text-sm font-semibold border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === 5
+                  ? "border-cyan-500 text-cyan-300 bg-cyan-500/5"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 text-cyan-400" />
+              <span>Tab 5: Thẩm định Bộ Test (6 Tiêu chí)</span>
+              {criteriaReport && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300">
+                  {criteriaReport.overallScore}%
+                </span>
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -420,6 +497,124 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                   )}
                 </div>
                 <MarkdownRenderer content={result.section4_FullAcCode} />
+              </div>
+            )}
+
+            {activeTab === 5 && (
+              <div className="space-y-5">
+                {/* Banner */}
+                <div className="p-4 rounded-xl bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 border border-cyan-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                      <h4 className="text-sm font-bold text-white">
+                        Hệ Tiêu Chí Thẩm Định Bộ Test Themis & CMS (Chuẩn Chấm HSG)
+                      </h4>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1 max-w-xl">
+                      Đánh giá theo 6 tiêu chuẩn cốt lõi: 1. Đúng/Sai 2. Có test đặc biệt không, có test biên không 3. Phân chia Subtask 4. Bẫy TLE & Anti-hack 5. Định dạng chuẩn Themis 6. Độ bao phủ.
+                    </p>
+                  </div>
+
+                  {testCases.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => downloadThemisZip(testCases, problemCodeName)}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-cyan-600 hover:bg-cyan-500 transition-all cursor-pointer shadow-md active:scale-95 flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      <FolderArchive className="w-4 h-4" />
+                      <span>Xuất Tệp ZIP Themis ({testCases.length} test)</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* AI Markdown Review if generated */}
+                {result.section5_TestSuiteEvaluation && (
+                  <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+                    <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                      Nhận Xét Chi Tiết Từ Chuyên Gia AI
+                    </h4>
+                    <MarkdownRenderer content={result.section5_TestSuiteEvaluation} />
+                  </div>
+                )}
+
+                {/* Interactive Criteria Breakdown Grid */}
+                {criteriaReport && (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">
+                          Điểm Đạt Chuẩn: {criteriaReport.overallScore}/100 ({criteriaReport.rating})
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          Chốt: Đúng {criteriaReport.validTestsCount}/{criteriaReport.totalTests} test chuẩn ({criteriaReport.totalTests > 0 ? Math.round((criteriaReport.validTestsCount / criteriaReport.totalTests) * 100) : 0}%)
+                        </span>
+                      </div>
+                      <span>Dữ liệu hiện có: {testCases.length} testcase</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {Object.entries(criteriaReport.criteria).map(([key, item]) => {
+                        const isPass = item.status === "pass";
+                        const isWarn = item.status === "warning";
+                        return (
+                          <div
+                            key={key}
+                            className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2.5"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                {isPass ? (
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                ) : isWarn ? (
+                                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                                )}
+                                <span className="font-bold text-white text-xs sm:text-sm">
+                                  {item.name}
+                                </span>
+                              </div>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isPass
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : isWarn
+                                    ? "bg-amber-500/20 text-amber-300"
+                                    : "bg-rose-500/20 text-rose-300"
+                                }`}
+                              >
+                                {item.score}%
+                              </span>
+                            </div>
+
+                            {/* Prominent Correctness Summary for Criterion 1 */}
+                            {key === "correctness" && (
+                              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-emerald-950/50 border border-emerald-800/60 shadow-inner">
+                                <span className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>Chốt kết quả kiểm định:</span>
+                                </span>
+                                <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-200 border border-emerald-500/40">
+                                  Đúng {criteriaReport.validTestsCount}/{criteriaReport.totalTests} test ({criteriaReport.totalTests > 0 ? Math.round((criteriaReport.validTestsCount / criteriaReport.totalTests) * 100) : 0}%)
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="space-y-1 text-xs text-slate-300">
+                              {item.details.map((d, i) => (
+                                <div key={i} className="leading-relaxed">
+                                  {d}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

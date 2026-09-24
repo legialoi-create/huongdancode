@@ -150,24 +150,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
-                onClick={() => setSelectedModel("gemini-3.1-flash-lite")}
-                className={`p-3 rounded-xl border text-left transition-all ${
-                  selectedModel === "gemini-3.1-flash-lite"
-                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
-                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-indigo-300">gemini-3.1-flash-lite</span>
-                  {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-                </div>
-                <p className="text-[11px] text-slate-400 leading-snug">
-                  <strong className="text-emerald-400">Khuyên dùng:</strong> Tốc độ phản hồi cực nhanh, tối ưu hạn mức ổn định, hỗ trợ ảnh & đề bài.
-                </p>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setSelectedModel("gemini-3.8-flash")}
                 className={`p-3 rounded-xl border text-left transition-all ${
                   selectedModel === "gemini-3.8-flash"
@@ -180,7 +162,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {selectedModel === "gemini-3.8-flash" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-snug">
-                  Mô hình nâng cao: Phân tích thuật toán chi tiết và chuyên sâu cho các bài toán phức tạp.
+                  <strong className="text-emerald-400">Khuyên dùng:</strong> Độ ổn định cao, phân tích chuyên sâu thuật toán & code chuẩn AC.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedModel("gemini-3.1-flash-lite")}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  selectedModel === "gemini-3.1-flash-lite"
+                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
+                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-indigo-300">gemini-3.1-flash-lite</span>
+                  {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  Tốc độ cực nhanh cho các bài tập cơ bản, tự động chuyển đổi mô hình dự phòng khi tải cao.
                 </p>
               </button>
             </div>

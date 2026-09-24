@@ -24,12 +24,14 @@ export function parseAnalysisMarkdown(rawMarkdown: string): ParsedAnalysis {
   const header3Regex = /(?:###?\s*3[.\s]|###?\s*Vị trí sai|###?\s*Lỗi & Điểm nghẽn)/i;
   const header4Regex = /(?:###?\s*4[.\s]|###?\s*Hướng dẫn sửa)/i;
   const header5Regex = /(?:###?\s*5[.\s]|###?\s*Mã nguồn C\+\+|###?\s*Code chuẩn Full AC)/i;
+  const header6Regex = /(?:###?\s*6[.\s]|###?\s*Thẩm định Bộ Test|###?\s*Đánh giá bộ test|###?\s*Tiêu chí bộ test)/i;
 
   // Split content based on headers if standard
   let section1 = "";
   let section2 = "";
   let section3 = "";
   let section4 = "";
+  let section5_TestSuiteEvaluation = "";
 
   // Helper to find slice between headers
   const match1 = rawMarkdown.search(header1Regex);
@@ -37,6 +39,7 @@ export function parseAnalysisMarkdown(rawMarkdown: string): ParsedAnalysis {
   const match3 = rawMarkdown.search(header3Regex);
   const match4 = rawMarkdown.search(header4Regex);
   const match5 = rawMarkdown.search(header5Regex);
+  const match6 = rawMarkdown.search(header6Regex);
 
   if (match1 !== -1 && match3 !== -1) {
     // Section 1: Overview & Student Code Evaluation (Mục 1 + Mục 2)
@@ -45,22 +48,29 @@ export function parseAnalysisMarkdown(rawMarkdown: string): ParsedAnalysis {
 
     // Section 2: Flaws & Bottlenecks (Mục 3)
     const start2 = match3;
-    const end2 = match4 !== -1 ? match4 : (match5 !== -1 ? match5 : rawMarkdown.length);
+    const end2 = match4 !== -1 ? match4 : (match5 !== -1 ? match5 : (match6 !== -1 ? match6 : rawMarkdown.length));
     section2 = rawMarkdown.slice(start2, end2).trim();
 
     // Section 3: Step-by-step Guide (Mục 4)
     if (match4 !== -1) {
       const start3 = match4;
-      const end3 = match5 !== -1 ? match5 : rawMarkdown.length;
+      const end3 = match5 !== -1 ? match5 : (match6 !== -1 ? match6 : rawMarkdown.length);
       section3 = rawMarkdown.slice(start3, end3).trim();
     }
 
     // Section 4: Full AC Code (Mục 5)
     if (match5 !== -1) {
-      section4 = rawMarkdown.slice(match5).trim();
+      const start4 = match5;
+      const end4 = match6 !== -1 ? match6 : rawMarkdown.length;
+      section4 = rawMarkdown.slice(start4, end4).trim();
+    }
+
+    // Section 5 (Mục 6): Test Suite Evaluation
+    if (match6 !== -1) {
+      section5_TestSuiteEvaluation = rawMarkdown.slice(match6).trim();
     }
   } else {
-    // Fallback: divide into 4 parts if headers aren't standard or single text
+    // Fallback: divide into parts if headers aren't standard or single text
     section1 = rawMarkdown;
     section2 = "Vui lòng xem chi tiết trong báo cáo tổng quan.";
     section3 = "Vui lòng xem chi tiết trong báo cáo tổng quan.";
@@ -124,11 +134,16 @@ export function parseAnalysisMarkdown(rawMarkdown: string): ParsedAnalysis {
     estimatedScore = scoreMatch[1];
   }
 
+  if (section5_TestSuiteEvaluation || lower.includes("bộ test") || lower.includes("tiêu chí")) {
+    detectedTags.push("Thẩm định Bộ Test Themis");
+  }
+
   return {
     section1_Overview: section1,
     section2_Flaws: section2,
     section3_Guide: section3,
     section4_FullAcCode: section4,
+    section5_TestSuiteEvaluation,
     rawMarkdown,
     detectedTags,
     estimatedScore,
