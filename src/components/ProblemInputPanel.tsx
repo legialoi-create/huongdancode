@@ -14,11 +14,14 @@ import {
   Check,
   ArrowRight,
   RefreshCw,
-  AlertCircle,
   FileCheck2,
+  Layers,
+  Sparkles,
+  BookmarkCheck,
 } from "lucide-react";
 import { AttachedFile } from "../types";
 import { extractTextFromFile } from "../utils/fileExtractors";
+import { DetectedProblem, CodeIoDetection } from "../utils/problemDetector";
 
 interface ProblemInputPanelProps {
   problemText: string;
@@ -27,13 +30,21 @@ interface ProblemInputPanelProps {
   onAddFiles: (files: AttachedFile[]) => void;
   onRemoveFile: (fileId: string) => void;
   onClearProblem: () => void;
+  detectedProblems?: DetectedProblem[];
+  selectedProblemId?: string | null;
+  onSelectProblem?: (problem: DetectedProblem | null) => void;
+  matchedProblem?: DetectedProblem | null;
+  codeIo?: CodeIoDetection;
+  userApiKey?: string;
+  model?: string;
+  onReformulateSuccess?: (reformulatedText: string, problemCode?: string) => void;
 }
 
 interface BannerNotification {
   fileName: string;
   text: string;
   charCount: number;
-  autoApplied?: boolean;
+  isAiStandardized?: boolean;
 }
 
 export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
@@ -43,6 +54,13 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
   onAddFiles,
   onRemoveFile,
   onClearProblem,
+  detectedProblems = [],
+  selectedProblemId,
+  onSelectProblem,
+  matchedProblem,
+  userApiKey,
+  model,
+  onReformulateSuccess,
 }) => {
   const [activeTab, setActiveTab] = useState<"text" | "upload">("text");
   const [isDragging, setIsDragging] = useState(false);
@@ -53,17 +71,30 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
   const [copiedPreview, setCopiedPreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Process files (extract text from PDF, Word .docx/.doc, text files, and images)
+  // Process files: extract text from PDF (with spatial sorting), Word, Images, and automatically use AI to recreate standardized problem
   const processFiles = async (fileList: FileList | File[]) => {
     setIsProcessing(true);
     const newFiles: AttachedFile[] = [];
-    let extractedFromFile: { name: string; text: string } | null = null;
+    let extractedFromFile: { name: string; text: string; isPdfOrDoc: boolean } | null = null;
 
     try {
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
         const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        setProcessingStatus(`Đang đọc và phân tích file: ${file.name}...`);
+        const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+        const isWord =
+          file.name.toLowerCase().endsWith(".docx") ||
+          file.name.toLowerCase().endsWith(".doc") ||
+          file.type.includes("word") ||
+          file.type.includes("document");
+
+        setProcessingStatus(
+          isPdf
+            ? `Đang đọc cấu trúc & trích xuất PDF: ${file.name}...`
+            : isWord
+            ? `Đang đọc tài liệu Word: ${file.name}...`
+            : `Đang xử lý file: ${file.name}...`
+        );
 
         // Read ArrayBuffer
         const arrayBuffer = await file.arrayBuffer();
@@ -95,12 +126,16 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
           previewUrl = URL.createObjectURL(file);
         }
 
-        // Extract textual content from Word (.docx, .doc), PDF, or Text files
+        // Extract textual content from Word (.docx, .doc), PDF (layout-sorted), or Text files
         const { text: extractedText, mimeType } = await extractTextFromFile(file, arrayBuffer, base64Data);
 
         if (extractedText && extractedText.trim().length > 0) {
           if (!extractedFromFile) {
-            extractedFromFile = { name: file.name, text: extractedText.trim() };
+            extractedFromFile = {
+              name: file.name,
+              text: extractedText.trim(),
+              isPdfOrDoc: isPdf || isWord,
+            };
           }
         }
 
@@ -115,33 +150,71 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
         });
       }
 
-      // Handle extracted text notification and auto-application
-      if (extractedFromFile) {
-        const charCount = extractedFromFile.text.length;
-
-        // If problemText is empty or very short, auto-fill it
-        if (!problemText.trim() || problemText.trim().length < 20) {
-          onChangeProblemText(extractedFromFile.text);
-          setActiveTab("text");
-          setBannerNotice({
-            fileName: extractedFromFile.name,
-            text: extractedFromFile.text,
-            charCount,
-            autoApplied: true,
-          });
-        } else {
-          // If problemText already has content, show prominent banner with options
-          setBannerNotice({
-            fileName: extractedFromFile.name,
-            text: extractedFromFile.text,
-            charCount,
-            autoApplied: false,
-          });
-        }
-      }
-
       if (newFiles.length > 0) {
         onAddFiles(newFiles);
+      }
+
+      // Automatically recreate & standardize problem with AI and fill into the problem box below
+      if (extractedFromFile) {
+        const rawExtractedText = extractedFromFile.text;
+        const mainFileName = extractedFromFile.name;
+
+        // Auto-fill raw text first as instant fallback
+        onChangeProblemText(rawExtractedText);
+        setActiveTab("text");
+
+        // Now run AI auto-standardization in the background to produce a crystal-clear problem statement
+        setProcessingStatus(`AI đang tự động chuẩn hóa & tái tạo đề bài chuẩn từ ${mainFileName}...`);
+
+        try {
+          const res = await fetch("/api/reformulate-problem", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              problemText: rawExtractedText,
+              problemFiles: newFiles.map((f) => ({
+                name: f.name,
+                mimeType: f.mimeType,
+                base64: f.base64,
+                extractedText: f.extractedText,
+              })),
+              userApiKey,
+              model,
+            }),
+          });
+
+          const data = await res.json();
+          if (res.ok && data && data.success && data.reformulatedText) {
+            // Automatically set reformulated problem into the text box below
+            onChangeProblemText(data.reformulatedText);
+            if (onReformulateSuccess && data.problemCode) {
+              onReformulateSuccess(data.reformulatedText, data.problemCode);
+            }
+            setActiveTab("text");
+            setBannerNotice({
+              fileName: mainFileName,
+              text: data.reformulatedText,
+              charCount: data.reformulatedText.length,
+              isAiStandardized: true,
+            });
+          } else {
+            // Keep raw extracted text if AI was not available
+            setBannerNotice({
+              fileName: mainFileName,
+              text: rawExtractedText,
+              charCount: rawExtractedText.length,
+              isAiStandardized: false,
+            });
+          }
+        } catch {
+          // Keep raw extracted text
+          setBannerNotice({
+            fileName: mainFileName,
+            text: rawExtractedText,
+            charCount: rawExtractedText.length,
+            isAiStandardized: false,
+          });
+        }
       }
     } catch (err: any) {
       console.error("Lỗi khi xử lý file tải lên:", err);
@@ -155,7 +228,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
   const handleReExtract = async (file: AttachedFile) => {
     if (!file.base64) return;
     setIsProcessing(true);
-    setProcessingStatus(`Đang đọc lại nội dung file ${file.name}...`);
+    setProcessingStatus(`Đang đọc lại và AI tự động chuẩn hóa file ${file.name}...`);
     try {
       const binaryString = atob(file.base64);
       const bytes = new Uint8Array(binaryString.length);
@@ -167,11 +240,51 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
 
       if (text && text.trim().length > 0) {
         file.extractedText = text.trim();
+        // Call AI to recreate problem
+        try {
+          const res = await fetch("/api/reformulate-problem", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              problemText: text.trim(),
+              problemFiles: [
+                {
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  base64: file.base64,
+                  extractedText: text.trim(),
+                },
+              ],
+              userApiKey,
+              model,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok && data && data.success && data.reformulatedText) {
+            onChangeProblemText(data.reformulatedText);
+            if (onReformulateSuccess && data.problemCode) {
+              onReformulateSuccess(data.reformulatedText, data.problemCode);
+            }
+            setActiveTab("text");
+            setBannerNotice({
+              fileName: file.name,
+              text: data.reformulatedText,
+              charCount: data.reformulatedText.length,
+              isAiStandardized: true,
+            });
+            return;
+          }
+        } catch {
+          // Fallback
+        }
+
+        onChangeProblemText(text.trim());
+        setActiveTab("text");
         setBannerNotice({
           fileName: file.name,
           text: text.trim(),
           charCount: text.trim().length,
-          autoApplied: false,
+          isAiStandardized: false,
         });
       }
     } catch (e) {
@@ -228,7 +341,13 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
     if (mimeType === "application/pdf" || ext === "pdf") {
       return <FileText className="w-4 h-4 text-rose-400" />;
     }
-    if (ext === "docx" || ext === "doc" || mimeType.includes("word") || mimeType.includes("document") || mimeType.includes("msword")) {
+    if (
+      ext === "docx" ||
+      ext === "doc" ||
+      mimeType.includes("word") ||
+      mimeType.includes("document") ||
+      mimeType.includes("msword")
+    ) {
       return (
         <span className="w-4 h-4 rounded bg-blue-600/30 text-blue-400 font-bold text-[9px] flex items-center justify-center border border-blue-500/40">
           W
@@ -268,7 +387,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
   return (
     <div className="flex flex-col h-full bg-slate-900/70 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
       {/* Panel Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800">
+      <div className="flex flex-wrap items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 gap-2">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
             <FileText className="w-3.5 h-3.5" />
@@ -280,8 +399,8 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
           </div>
         </div>
 
-        {/* Tab switch / action */}
-        <div className="flex items-center gap-1.5">
+        {/* Tab switch */}
+        <div className="flex items-center gap-2">
           <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
             <button
               onClick={() => setActiveTab("text")}
@@ -317,7 +436,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                 setBannerNotice(null);
               }}
               title="Xóa đề bài và file đính kèm"
-              className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+              className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -325,57 +444,38 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
         </div>
       </div>
 
-      {/* Actionable Banner for Extracted Document */}
+      {/* Actionable Banner for Extracted & AI-Standardized Document */}
       {bannerNotice && (
-        <div className="bg-gradient-to-r from-blue-950/80 via-indigo-950/80 to-slate-900 border-b border-indigo-500/30 px-3.5 py-2.5 text-xs text-slate-200 flex flex-wrap items-center justify-between gap-2 animate-fadeIn">
+        <div className="bg-gradient-to-r from-blue-950/90 via-indigo-950/90 to-slate-900 border-b border-indigo-500/30 px-3.5 py-2.5 text-xs text-slate-200 flex flex-wrap items-center justify-between gap-2 animate-fadeIn">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
               <FileCheck2 className="w-3.5 h-3.5" />
             </div>
             <div className="truncate text-xs">
-              {bannerNotice.autoApplied ? (
+              {bannerNotice.isAiStandardized ? (
                 <span>
-                  <strong className="text-emerald-300">Đã tự động nạp đề bài</strong> từ file{" "}
+                  <strong className="text-emerald-300">✨ AI đã tự động chuẩn hóa đề bài</strong> từ file:{" "}
                   <code className="text-indigo-300 font-mono font-semibold">{bannerNotice.fileName}</code>{" "}
-                  ({bannerNotice.charCount.toLocaleString()} ký tự).
+                  ({bannerNotice.charCount.toLocaleString()} ký tự). Đã hiển thị ở ô bên dưới!
                 </span>
               ) : (
                 <span>
-                  Đã đọc thành công file{" "}
+                  <strong className="text-indigo-300">Đã nạp file</strong>:{" "}
                   <code className="text-indigo-300 font-mono font-semibold">{bannerNotice.fileName}</code>{" "}
-                  ({bannerNotice.charCount.toLocaleString()} ký tự). Bạn muốn:
+                  ({bannerNotice.charCount.toLocaleString()} ký tự). Đã hiển thị ở ô bên dưới.
                 </span>
               )}
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {!bannerNotice.autoApplied && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => handleReplaceProblem(bannerNotice.text)}
-                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition-all cursor-pointer flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  Thay thế đề bài
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAppendProblem(bannerNotice.text)}
-                  className="px-2 py-1 rounded-md text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all cursor-pointer"
-                >
-                  Nối thêm
-                </button>
-              </>
-            )}
             <button
               type="button"
               onClick={() => setPreviewFile({ name: bannerNotice.fileName, text: bannerNotice.text })}
               className="px-2 py-1 rounded-md text-[11px] font-medium text-indigo-300 hover:text-white hover:bg-indigo-900/50 border border-indigo-700/50 transition-all cursor-pointer flex items-center gap-1"
             >
               <Eye className="w-3 h-3" />
-              Xem trước
+              Xem bản gốc
             </button>
             <button
               type="button"
@@ -385,6 +485,75 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
             >
               <X className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Question Contest Detection Ribbon */}
+      {detectedProblems.length > 1 && (
+        <div className="bg-slate-950/90 border-b border-indigo-900/40 px-3.5 py-2.5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-1.5 font-semibold text-indigo-300">
+              <Layers className="w-4 h-4 text-indigo-400" />
+              <span>Phát hiện đề thi gồm {detectedProblems.length} câu:</span>
+            </div>
+
+            {matchedProblem && (
+              <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-300 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded-md">
+                <BookmarkCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>
+                  Đã tự động khớp <strong>{matchedProblem.label} ({matchedProblem.inputFile || matchedProblem.problemCode})</strong> với code C++
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* List of detected questions buttons */}
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {detectedProblems.map((prob) => {
+              const isMatched = matchedProblem?.id === prob.id;
+              const isSelected = selectedProblemId === prob.id;
+              return (
+                <button
+                  key={prob.id}
+                  type="button"
+                  onClick={() => {
+                    if (onSelectProblem) {
+                      onSelectProblem(isSelected ? null : prob);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    isSelected
+                      ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
+                      : isMatched
+                      ? "bg-emerald-950/60 text-emerald-200 border-emerald-500/60 hover:bg-emerald-900/60"
+                      : "bg-slate-900/80 text-slate-300 border-slate-700/60 hover:bg-slate-800 hover:text-white"
+                  }`}
+                  title={`${prob.label}: ${prob.title} ${prob.inputFile ? `(File: ${prob.inputFile})` : ""}`}
+                >
+                  <span className="font-semibold">{prob.label}:</span>
+                  <span className="max-w-[120px] sm:max-w-[180px] truncate">{prob.title}</span>
+                  {prob.inputFile && (
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-black/40 text-cyan-300 border border-cyan-800/40">
+                      {prob.inputFile}
+                    </span>
+                  )}
+                  {isMatched && (
+                    <span className="text-[10px] text-emerald-400 font-bold ml-0.5">⭐ Khớp Code</span>
+                  )}
+                </button>
+              );
+            })}
+
+            {selectedProblemId && onSelectProblem && (
+              <button
+                type="button"
+                onClick={() => onSelectProblem(null)}
+                className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-slate-200 bg-slate-900 border border-slate-800 cursor-pointer"
+              >
+                Xem tất cả
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -400,14 +569,21 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
               placeholder={`Dán nội dung đề bài tại đây...
 (Bao gồm: Yêu cầu bài toán, Input/Output, Ràng buộc Time/Memory limit, Giới hạn N, M, Subtask...)
 
-💡 Mẹo: 
-- Bạn có thể chuyển sang tab "Đính kèm file" để tải file Word (.docx, .doc), PDF (.pdf) hoặc Text (.txt, .inp). Hệ thống sẽ tự động đọc toàn bộ đề bài và công thức toán!
-- Hoặc dán trực tiếp ảnh chụp màn hình đề bài bằng phím Ctrl+V / Cmd+V!`}
-              className="flex-1 w-full p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder:text-slate-600 font-sans text-xs sm:text-sm leading-relaxed resize-none focus:outline-none focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 transition-all"
+💡 Tự động hóa:
+- Kéo thả file PDF, Word (.docx/.doc) hoặc ảnh đề vào tab "Đính kèm file", hệ thống sẽ tự động đọc chuẩn bố cục và dùng AI tái tạo lại đề bài chuẩn mực, dễ hiểu nhất hiển thị ngay tại đây!`}
+              className="flex-1 w-full p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder:text-slate-600 font-sans text-xs sm:text-sm leading-relaxed resize-none focus:outline-none focus:border-indigo-500/80 focus:ring-1 focus:ring-indigo-500/30 transition-all font-mono"
             />
-            <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500 px-1">
-              <span>{problemText.length.toLocaleString()} ký tự</span>
-              <span className="text-slate-400">Hỗ trợ LaTeX công thức toán $...$ & Markdown</span>
+            <div className="flex flex-wrap items-center justify-between mt-2 text-[11px] text-slate-500 px-1 gap-2">
+              <div className="flex items-center gap-3">
+                <span>{problemText.length.toLocaleString()} ký tự</span>
+                <span className="text-slate-400">Hỗ trợ LaTeX công thức toán $...$ & Markdown</span>
+              </div>
+              {isProcessing && (
+                <div className="flex items-center gap-1.5 text-indigo-400">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>{processingStatus || "Đang xử lý..."}</span>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -428,7 +604,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                   {processingStatus || "Đang đọc nội dung file..."}
                 </p>
                 <p className="text-xs text-slate-400 max-w-xs">
-                  Hệ thống đang tự động trích xuất đề bài, công thức Word Equation ($m:oMath$) và bảng dữ liệu...
+                  Hệ thống đang đọc và AI tự động chuẩn hóa cấu trúc đề bài để hiển thị trực tiếp vào ô Đề bài bên dưới...
                 </p>
               </div>
             ) : (
@@ -440,9 +616,8 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                   Kéo & thả file đề bài vào đây
                 </p>
                 <p className="text-xs text-slate-400 text-center max-w-sm mb-4 leading-relaxed">
-                  Hỗ trợ trực tiếp văn bản{" "}
+                  Đọc chuẩn xác file <span className="text-rose-400 font-semibold">PDF (.pdf)</span>,{" "}
                   <span className="text-blue-400 font-semibold">Word (.docx, .doc)</span>,{" "}
-                  <span className="text-rose-400 font-semibold">PDF (.pdf)</span>,{" "}
                   <span className="text-cyan-400 font-semibold">Text (.txt, .inp, .md)</span>, và ảnh chụp đề (<span className="text-emerald-400 font-semibold">.png, .jpg</span>)
                 </p>
 
@@ -460,14 +635,16 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                   className="hidden"
                 />
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Chọn file từ máy tính</span>
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Chọn file từ máy tính</span>
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -482,7 +659,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                 {attachedFiles.some((f) => f.extractedText) && (
                   <span className="text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded-md flex items-center gap-1 font-medium">
                     <CheckCircle2 className="w-3 h-3" />
-                    Đã đọc văn bản từ tài liệu
+                    Đã tự động đọc & chuẩn hóa
                   </span>
                 )}
               </span>
@@ -502,6 +679,8 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                   file.name.endsWith(".doc") ||
                   file.mimeType.includes("word") ||
                   file.mimeType.includes("document");
+
+                const isPdf = file.name.endsWith(".pdf") || file.mimeType === "application/pdf";
 
                 return (
                   <div
@@ -528,13 +707,13 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                           <span>{formatFileSize(file.size)}</span>
                           {file.extractedText ? (
                             <span className="text-emerald-400 font-mono font-medium">
-                              • Đã đọc {file.extractedText.length.toLocaleString()} ký tự
+                              • {file.extractedText.length.toLocaleString()} ký tự
                             </span>
-                          ) : isWord ? (
+                          ) : (
                             <span className="text-amber-400">
-                              • Đang phân tích...
+                              • Đang xử lý
                             </span>
-                          ) : null}
+                          )}
                         </div>
                       </div>
                     </div>
@@ -561,11 +740,11 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                             Đưa vào đề
                           </button>
                         </>
-                      ) : isWord ? (
+                      ) : isWord || isPdf ? (
                         <button
                           type="button"
                           onClick={() => handleReExtract(file)}
-                          title="Thử trích xuất lại nội dung Word"
+                          title="Thử trích xuất lại nội dung"
                           className="px-1.5 py-0.8 rounded text-[10px] font-medium bg-amber-950 text-amber-300 hover:bg-amber-900 border border-amber-800/60 transition-all cursor-pointer flex items-center gap-1"
                         >
                           <RefreshCw className="w-2.5 h-2.5" />
@@ -590,11 +769,10 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
         )}
       </div>
 
-      {/* Preview Modal for Extracted Document Text */}
+      {/* Preview Modal for Raw Extracted Text */}
       {previewFile && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
           <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
@@ -605,7 +783,7 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
                     Nội dung trích xuất: {previewFile.name}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {previewFile.text.length.toLocaleString()} ký tự • Đã tự động chuyển đổi công thức và bảng dữ liệu
+                    {previewFile.text.length.toLocaleString()} ký tự • Đã tự động sắp xếp theo thứ tự dòng và trang
                   </p>
                 </div>
               </div>
@@ -618,12 +796,10 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
               </button>
             </div>
 
-            {/* Modal Body */}
             <div className="flex-1 p-5 overflow-y-auto font-mono text-xs text-slate-200 leading-relaxed whitespace-pre-wrap bg-slate-950/50 selection:bg-indigo-600 selection:text-white">
               {previewFile.text}
             </div>
 
-            {/* Modal Footer */}
             <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-t border-slate-800">
               <button
                 type="button"
@@ -664,3 +840,4 @@ export const ProblemInputPanel: React.FC<ProblemInputPanelProps> = ({
     </div>
   );
 };
+

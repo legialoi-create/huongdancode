@@ -143,44 +143,88 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Model Selection */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-              Chọn Mô hình AI (Gemini Model)
-            </label>
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+                Chọn Mô hình AI (Gemini Model)
+              </label>
+              <span className="text-[10px] text-indigo-300 font-mono">
+                {selectedModel}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {/* Option 1: Gemini 3.8 Flash (Recommended Default) */}
               <button
                 type="button"
                 onClick={() => setSelectedModel("gemini-3.8-flash")}
-                className={`p-3 rounded-xl border text-left transition-all ${
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   selectedModel === "gemini-3.8-flash"
                     ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
                     : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-indigo-300">gemini-3.8-flash</span>
+                  <span className="font-bold text-xs text-indigo-300 flex items-center gap-1.5">
+                    Gemini 3.8 Flash
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-indigo-950 border border-indigo-600/50 text-indigo-200">
+                      CHUẨN
+                    </span>
+                  </span>
                   {selectedModel === "gemini-3.8-flash" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-snug">
-                  <strong className="text-emerald-400">Khuyên dùng:</strong> Độ ổn định cao, phân tích chuyên sâu thuật toán & code chuẩn AC.
+                  Mô hình thế hệ mới nhất, tốc độ phản hồi nhanh và độ chính xác phân tích đề cực cao.
                 </p>
               </button>
 
+              {/* Option 2: Gemini 3.1 Pro (Flagship Reasoning) */}
               <button
                 type="button"
-                onClick={() => setSelectedModel("gemini-3.1-flash-lite")}
-                className={`p-3 rounded-xl border text-left transition-all ${
-                  selectedModel === "gemini-3.1-flash-lite"
-                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
+                onClick={() => setSelectedModel("gemini-3.1-pro-preview")}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  selectedModel === "gemini-3.1-pro-preview" || selectedModel === "gemini-3.1-pro"
+                    ? "bg-purple-600/15 border-purple-500 text-white shadow-sm ring-1 ring-purple-500/40"
                     : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs text-indigo-300">gemini-3.1-flash-lite</span>
-                  {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                  <span className="font-bold text-xs text-purple-300 flex items-center gap-1.5">
+                    Gemini 3.1 Pro
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-purple-950 border border-purple-600/50 text-purple-200">
+                      FLAGSHIP
+                    </span>
+                  </span>
+                  {(selectedModel === "gemini-3.1-pro-preview" || selectedModel === "gemini-3.1-pro") && (
+                    <Check className="w-3.5 h-3.5 text-purple-400" />
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-snug">
-                  Tốc độ cực nhanh cho các bài tập cơ bản, tự động chuyển đổi mô hình dự phòng khi tải cao.
+                  <strong className="text-purple-300">Siêu trí tuệ toán học & CP:</strong> Tư duy sâu, xử lý thuật toán phức tạp và đối chiếu test chi tiết.
+                </p>
+              </button>
+
+              {/* Option 3: Gemini 3.1 Flash Lite */}
+              <button
+                type="button"
+                onClick={() => setSelectedModel("gemini-3.1-flash-lite")}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  selectedModel === "gemini-3.1-flash-lite"
+                    ? "bg-emerald-600/15 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40"
+                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-emerald-300 flex items-center gap-1.5">
+                    Flash Lite
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-950 border border-emerald-600/50 text-emerald-200">
+                      SIÊU NHANH
+                    </span>
+                  </span>
+                  {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  Độ trễ tối thiểu, phản hồi tức thì cho các bài toán cơ bản và duyệt test nhanh.
                 </p>
               </button>
             </div>

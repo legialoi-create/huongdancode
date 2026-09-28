@@ -146,30 +146,38 @@ async function extractWordFromBuffer(buf: Buffer, fileName: string): Promise<str
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const SYSTEM_INSTRUCTION = `Bạn là chuyên gia lập trình thi đấu (Competitive Programming) và giáo viên bồi dưỡng học sinh giỏi Tin học hàng đầu.
-Nhiệm vụ của bạn là nhận đề bài, code C++ của học sinh và (nếu có) bộ test chấm Themis, sau đó phân tích và xuất kết quả chuẩn Markdown theo đúng 6 mục:
+Nhiệm vụ của bạn là nhận đề bài (có thể là 1 bài riêng lẻ hoặc một tài liệu ĐỀ THI GỒM NHIỀU BÀI/NHIỀU CÂU), code C++ của học sinh và (nếu có) bộ test chấm Themis, sau đó phân tích và xuất kết quả chuẩn Markdown theo đúng 6 mục:
 
-⚠️ QUY TẮC ĐẶC BIỆT - KIỂM TRA ĐỘ TƯƠNG QUAN GIỮA ĐỀ VÀ CODE:
-- Trước tiên, hãy đối chiếu kỹ đề bài (hoặc hình ảnh/tệp đề) và code C++ nộp lên.
-- NẾU ĐỀ BÀI VÀ CODE HOÀN TOÀN KHÔNG LIÊN QUAN ĐẾN NHAU (học sinh nộp nhầm code của bài khác, ví dụ: đề yêu cầu tính tổng dãy con lớn nhất nhưng code lại đi tìm ước chung lớn nhất hoặc sắp xếp đồ thị):
-  + BẮT BUỘC BÁO RÕ RÀNG: "⚠️ CẢNH BÁO: Đề bài và mã nguồn C++ nộp lên KHÔNG PHẢI LÀ CỦA CÙNG MỘT BÀI TOÁN! (Code nộp lên đang giải quyết một bài toán khác hoàn toàn so với yêu cầu đề bài)."
-  + Ghi rõ ở Mục 2 & Mục 3 cảnh báo nộp nhầm bài này và ước lượng điểm là "0/100 test (Do nộp sai code của bài khác)".
-  + Tại Mục 5: Cung cấp mã nguồn C++ Full AC hoàn chỉnh để giải quyết ĐÚNG ĐỀ BÀI mà đề bài yêu cầu.
+🎯 QUY TẮC ĐẶC BIỆT 1 - TỰ ĐỘNG CHỌN ĐÚNG BÀI TOÁN KHI TẬP TIN ĐÍNH KÈM CHỨA NHIỀU CÂU / ĐỀ THI NHIỀU BÀI:
+- Khi tài liệu đính kèm (Word .docx/.doc, PDF, text) hoặc văn bản đề bài chứa TOÀN BỘ ĐỀ THI GỒM NHIỀU CÂU (ví dụ: Bài 1, Bài 2, Bài 3, Bài 4...):
+  + Hãy quét qua toàn bộ tài liệu để xác định danh sách các bài toán và tệp vào/ra tương ứng của từng bài (ví dụ: Bài 1: TONG.INP, Bài 2: DEM.INP, Bài 3: BIENDO.INP...).
+  + Đối chiếu với mã nguồn C++ của học sinh: Tìm lệnh \`freopen("...", "r", stdin)\`, tên tệp \`.INP\` / \`.OUT\`, tên biến, thuật toán, bộ testcases hoặc mã bài toán được cung cấp.
+  + ⚡ BẮT BUỘC TỰ ĐỘNG CHỌN VÀ TẬP TRUNG PHÂN TÍCH ĐÚNG BÀI CÓ TỆP INPUT/OUTPUT TRÙNG KHỚP VỚI CODE C++ VÀ BỘ TEST ĐANG XỬ LÝ!
+  + Tại Mục 1 (Phân tích bài toán & Ràng buộc cốt lõi), mở đầu bằng dòng thông báo rõ ràng:
+    "📌 **Tự động nhận diện bài toán:** Đã trích xuất và chọn đúng **[Bài X: TÊN BÀI (Tệp: TENBAI.INP / TENBAI.OUT)]** từ tài liệu đề thi nhiều câu để đối chiếu với mã nguồn C++."
+  + Toàn bộ 6 mục phân tích, chỉ ra lỗi, mã nguồn Full AC (Mục 5) và thẩm định bộ test (Mục 6) ĐỀU PHẢI THỰC HIỆN TRÊN ĐÚNG BÀI TOÁN ĐƯỢC CHỌN NÀY!
+
+⚠️ QUY TẮC ĐẶC BIỆT 2 - KIỂM TRA ĐỘ TƯƠNG QUAN GIỮA ĐỀ VÀ CODE:
+- NẾU ĐỀ BÀI (kể cả sau khi đã quét toàn bộ các câu trong đề thi) VÀ CODE HOÀN TOÀN KHÔNG LIÊN QUAN ĐẾN NHAU (học sinh nộp nhầm code của một kỳ thi khác hoặc bài khác không có trong đề):
+  + BẮT BUỘC BÁO RÕ RÀNG: "⚠️ CẢNH BÁO: Mã nguồn C++ nộp lên KHÔNG KHỚP với bất kỳ câu nào trong đề bài/đề thi được cung cấp!"
+  + Ghi rõ ở Mục 2 & Mục 3 cảnh báo nộp nhầm bài này và ước lượng điểm là "0/100 test (Do nộp sai code)".
+  + Tại Mục 5: Cung cấp mã nguồn C++ Full AC hoàn chỉnh để giải quyết bài toán tương ứng trong đề.
 
 ### 1. Phân tích bài toán & Ràng buộc cốt lõi
-- Tóm tắt yêu cầu chính của bài toán.
+- Tóm tắt yêu cầu chính của bài toán (ghi rõ bài nào nếu đề có nhiều câu).
 - Ràng buộc dữ liệu (Time limit, Memory limit, giới hạn $N, M$, các subtask...).
 - Quy cách vào/ra (File I/O hay Standard I/O): Chú ý đọc kỹ đề bài xem có yêu cầu đọc ghi qua tệp không (ví dụ: \`TENBAI.INP\` và \`TENBAI.OUT\`).
 - Độ phức tạp thời gian/không gian chuẩn để đạt Full điểm (ví dụ: $O(N \\log N)$).
 
 ### 2. Đánh giá code học sinh
-- Tóm tắt ý tưởng/thuật toán mà học sinh đang tiếp cận. (Nếu phát hiện code không khớp với đề bài, hãy cảnh báo ngay tại đây).
-- Ưu điểm và ước lượng điểm/số test pass (ví dụ: 40/100 test do dính TLE ở subtask 2, 0/100 do tràn số/quên mở file, hoặc 0/100 do code không khớp với đề).
+- Tóm tắt ý tưởng/thuật toán mà học sinh đang tiếp cận đối với bài toán tương ứng.
+- Ưu điểm và ước lượng điểm/số test pass (ví dụ: 40/100 test do dính TLE ở subtask 2, 0/100 do tràn số/quên mở file).
 
 ### 3. Vị trí sai & Chỗ chưa tối ưu
 - **Kiểm tra tính tương thích Đề - Code:** Nhắc nhở rõ nếu code giải sai bài toán.
 - **Quy cách Vào/Ra Tệp (File I/O):** ĐỐI CHIẾU KỸ GIỮA ĐỀ VÀ CODE:
   + Nếu đề bài yêu cầu nộp file (ví dụ: \`TENBAI.INP\` / \`TENBAI.OUT\`) mà code học sinh quên mở file bằng \`freopen\` hoặc mở sai tên file $\\rightarrow$ Chỉ rõ lỗi này khiến bài nhận 0/100 điểm trên hệ thống chấm thi HSG (Themis/CMS).
-  + Nếu đề bài dùng Standard I/O (bàn phím/màn hình) mà học sinh lại mở file (hoặc ngược lại) thì phải nhắc nhở chính xác.
+  + Nếu đề bài dùng Standard I/O mà học sinh lại mở file (hoặc ngược lại) thì phải nhắc nhở chính xác.
 - **Lỗi cú pháp / Logic / Tràn số:** Chỉ rõ chính xác dòng nào sai, cần ép kiểu ra sao (đặc biệt chú ý \`long long\`, khởi tạo mảng, chia dư, tràn số khi nhân hai số \`int\`, xử lý biên $N=0, 1$).
 - **Độ phức tạp & TLE:** Giải thích vì sao thuật toán hiện tại bị quá thời gian chạy.
 - **Tối ưu I/O:** \`ios_base::sync_with_stdio(0); cin.tie(0);\` và tránh dùng \`endl\`.
@@ -228,6 +236,8 @@ export default async function handler(req: any, res: any) {
       userApiKey,
       model = "gemini-3.8-flash",
       testCases,
+      problemCodeName,
+      selectedQuestionTitle,
     } = req.body || {};
 
     const hasCodeText = codeText && typeof codeText === "string" && codeText.trim().length > 0;
@@ -321,7 +331,26 @@ export default async function handler(req: any, res: any) {
     if (hasTestCases) {
       const formatted = testCases
         .map((t: any, i: number) => {
-          return `Test ${(i + 1).toString().padStart(2, "0")} [${t.category || "General"}]:\n- INPUT:\n${t.input}\n- OUTPUT CHUẨN:\n${t.expectedOutput}${t.description ? `\n- Mục đích: ${t.description}` : ""}`;
+          let inputPreview = t.input || "";
+          if (inputPreview.length > 2000) {
+            const lines = inputPreview.trim().split("\n");
+            if (lines.length > 15) {
+              const firstPart = lines.slice(0, 8).join("\n");
+              const lastPart = lines.slice(-4).join("\n");
+              inputPreview = `${firstPart}\n... [Dữ liệu mảng lớn: tổng cộng ${lines.length.toLocaleString()} dòng / ${t.input.length.toLocaleString()} ký tự] ...\n${lastPart}`;
+            } else {
+              const firstPart = inputPreview.slice(0, 1000);
+              const lastPart = inputPreview.slice(-400);
+              inputPreview = `${firstPart}\n... [Dữ liệu mảng lớn: ${t.input.length.toLocaleString()} ký tự] ...\n${lastPart}`;
+            }
+          }
+
+          let outputPreview = t.expectedOutput || "";
+          if (outputPreview.length > 1000) {
+            outputPreview = `${outputPreview.slice(0, 500)}\n... [Đáp án lớn: ${outputPreview.length.toLocaleString()} ký tự] ...\n${outputPreview.slice(-200)}`;
+          }
+
+          return `Test ${(i + 1).toString().padStart(2, "0")} [${t.category || "General"}]:\n- INPUT:\n${inputPreview}\n- OUTPUT CHUẨN:\n${outputPreview}${t.description ? `\n- Mục đích: ${t.description}` : ""}`;
         })
         .join("\n\n");
       testCasesBlock = `\n\n=== BỘ TEST THEMIS HIỆN CÓ (${testCases.length} TESTCASES) ===\n${formatted}\n\nHÃY THẨM ĐỊNH BỘ TEST NÀY THEO 6 TIÊU CHÍ VÀNG Ở MỤC 6: 1. Đúng/Sai 2. Test đặc biệt & Test biên (N=0, 1, cực đại, số âm, bẫy tràn số int64) 3. Subtask 4. Bẫy TLE & Anti-hack 5. Format Themis 6. Đề xuất bổ sung test thiếu.`;
@@ -331,14 +360,20 @@ export default async function handler(req: any, res: any) {
       ? `=== CODE C++ CỦA HỌC SINH / MÃ NGUỒN THỬ NGHIỆM ===\n\`\`\`cpp\n${codeText}\n\`\`\`\n(Lưu ý: Mã nguồn này có thể là code đang giải dở, dính TLE/WA, hoặc chưa phải code chuẩn AC. Hãy thẩm định bộ test xem bộ test có phát hiện được lỗi trong code này không, và viết lại Code Chuẩn Full AC hoàn thiện)`
       : `=== MÃ NGUỒN C++ ===\n(Hiện tại chưa cung cấp mã nguồn hoặc người dùng chưa có code chuẩn. Hãy thẩm định bộ test độc lập dựa trên Đề bài theo 6 tiêu chuẩn, tự động tính toán output chuẩn cho từng test để kiểm tra tính đúng/sai của test, và viết mã nguồn C++ Full AC hoàn thiện đạt 100/100 điểm làm chuẩn đối chiếu)`;
 
-    const promptText = `Sau đây là thông tin bài toán, mã nguồn C++ (nếu có) và bộ test chấm Themis:
+    let problemHeaderContext = "";
+    if (problemCodeName || selectedQuestionTitle) {
+      problemHeaderContext = `\n📌 THÔNG TIN ĐỊNH DANH BÀI TOÁN / MÃ BÀI:${problemCodeName ? ` Mã bài (Tệp I/O): ${problemCodeName}` : ""}${selectedQuestionTitle ? ` | Câu đã chọn: ${selectedQuestionTitle}` : ""}\n`;
+    }
 
+    const promptText = `Sau đây là thông tin đề bài (hoặc tập tài liệu đề thi có thể gồm nhiều câu), mã nguồn C++ (nếu có) và bộ test chấm Themis:
+${problemHeaderContext}
 === ĐỀ BÀI (PROBLEM STATEMENT) ===
 ${hasProblemText ? problemText : "(Chi tiết đề bài nằm trong file đính kèm phía trên)"}
 
 ${studentCodeSection}${testCasesBlock}
 
 YÊU CẦU QUAN TRỌNG:
+- NẾU TÀI LIỆU ĐỀ THI GỒM NHIỀU CÂU/NHIỀU BÀI: Hãy tự động tìm câu có tệp vào/ra (.INP/.OUT) hoặc tên bài trùng khớp với code C++ (freopen) và bộ test để tiến hành phân tích đúng câu đó. Nêu rõ câu được chọn ngay đầu Mục 1.
 - Ở Mục 5 (CODE FULL AC): Viết mã nguồn C++ hoàn chỉnh đạt 100/100 điểm, có đầy đủ #include, freopen và fast I/O. Nếu có code học sinh gửi kèm, giữ nguyên tên biến và phong cách của học sinh, chỉ sửa đúng vị trí lỗi kèm chú thích. Nếu chưa có code gửi kèm, viết code chuẩn chỉnh, mộc mạc và tối ưu cho đề bài.
 - Ở Mục 6 (THẨM ĐỊNH BỘ TEST THEMIS): Dù CÓ CODE hay KHÔNG CÓ CODE CHUẨN, hãy thẩm định kỹ càng bộ test theo 6 tiêu chuẩn (1. Đúng/Sai 2. Test đặc biệt & Test biên N=1, Nmax, tràn số int64 3. Subtask 4. Bẫy TLE & Anti-hack 5. Định dạng Themis 6. Độ bao phủ & đề xuất test thiếu). Đưa ra nhận xét cụ thể và số điểm đánh giá cho bộ test.
 
@@ -346,6 +381,7 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
     parts.push({ text: promptText });
 
+    // Dynamic candidate models list for automatic fallback
     const requestedModel = model || "gemini-3.8-flash";
     const candidateModels = Array.from(
       new Set([
@@ -360,59 +396,81 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
     let usedModel = requestedModel;
     let lastError: any = null;
 
-    for (let i = 0; i < candidateModels.length; i++) {
-      const candidate = candidateModels[i];
-      let modelSuccess = false;
+    // Attempt generation with automatic model switching & backoff on 503/429
+    for (let pass = 0; pass < 2 && !response; pass++) {
+      for (let i = 0; i < candidateModels.length; i++) {
+        const candidate = candidateModels[i];
 
-      try {
-        const modelConfig: any = {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.2,
-        };
+        // Try up to 2 attempts per model with short jitter backoff on 503/429
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            console.log(
+              `[API Analyze] Pass ${pass + 1}, Requesting from ${candidate} (attempt ${attempt + 1})...`
+            );
 
-        if (candidate.includes("flash-lite")) {
-          modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
-        } else if (candidate.includes("3.8-flash") || candidate.includes("3.1")) {
-          modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+            const modelConfig: any = {
+              systemInstruction: SYSTEM_INSTRUCTION,
+              temperature: 0.2,
+            };
+
+            if (candidate === "gemini-3.1-flash-lite") {
+              modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+            } else if (candidate.startsWith("gemini-3")) {
+              modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+            }
+
+            const resGen = await ai.models.generateContent({
+              model: candidate,
+              contents: { parts },
+              config: modelConfig,
+            });
+
+            if (resGen && resGen.text) {
+              response = resGen;
+              usedModel = candidate;
+              console.log(`[API Analyze] Successfully generated response using: ${candidate}`);
+              break;
+            }
+          } catch (candidateErr: any) {
+            lastError = candidateErr;
+            const errStr = candidateErr?.message || "";
+            const isDemandSpike =
+              errStr.includes("503") ||
+              errStr.includes("UNAVAILABLE") ||
+              errStr.includes("high demand") ||
+              errStr.includes("overloaded");
+            const isQuotaExceeded =
+              errStr.includes("429") ||
+              errStr.includes("RESOURCE_EXHAUSTED") ||
+              errStr.includes("Quota exceeded");
+            const isNotFound =
+              errStr.includes("404") ||
+              errStr.includes("not found") ||
+              errStr.includes("no longer available");
+
+            if (isDemandSpike || isQuotaExceeded) {
+              const backoff = 600 * (attempt + 1) + Math.random() * 400;
+              console.warn(
+                `[API Analyze] Model ${candidate} transient ${isDemandSpike ? "503 spike" : "429 quota"} on attempt ${attempt + 1}. Backing off ${Math.round(backoff)}ms...`
+              );
+              await sleep(backoff);
+            } else if (isNotFound) {
+              console.warn(`[API Analyze] Model ${candidate} not found. Skipping to next candidate...`);
+              break;
+            } else {
+              throw candidateErr;
+            }
+          }
         }
 
-        response = await ai.models.generateContent({
-          model: candidate,
-          contents: { parts },
-          config: modelConfig,
-        });
-
-        usedModel = candidate;
-        modelSuccess = true;
-      } catch (candidateErr: any) {
-        lastError = candidateErr;
-        const errStr = candidateErr?.message || "";
-        const isDemandSpike =
-          errStr.includes("503") ||
-          errStr.includes("UNAVAILABLE") ||
-          errStr.includes("high demand") ||
-          errStr.includes("overloaded");
-        const isQuotaExceeded =
-          errStr.includes("429") ||
-          errStr.includes("RESOURCE_EXHAUSTED") ||
-          errStr.includes("Quota exceeded");
-        const isNotFound =
-          errStr.includes("404") ||
-          errStr.includes("not found") ||
-          errStr.includes("no longer available");
-
-        if (isDemandSpike || isQuotaExceeded || isNotFound) {
-          console.warn(
-            `Model ${candidate} encountered transient issue (${errStr.slice(0, 100)}). Automatically switching to next candidate model...`
-          );
-          continue;
-        } else {
-          throw candidateErr;
+        if (response) {
+          break;
         }
       }
 
-      if (modelSuccess && response) {
-        break;
+      if (!response && pass === 0) {
+        console.warn("[API Analyze] All candidates in pass 1 hit transient issues. Pausing 1000ms before pass 2...");
+        await sleep(1000);
       }
     }
 

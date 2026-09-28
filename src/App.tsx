@@ -1,39 +1,39 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Sparkles,
-  Play,
-  RotateCcw,
   BookOpen,
-  ArrowRight,
-  ShieldAlert,
-  HelpCircle,
   FileCode,
-  CheckCircle2,
-  Terminal,
-  ShieldCheck,
-  Columns,
-  LayoutGrid,
 } from "lucide-react";
 import { Header } from "./components/Header";
 import { ProblemInputPanel } from "./components/ProblemInputPanel";
 import { CodeInputPanel } from "./components/CodeInputPanel";
 import { ResultPanel } from "./components/ResultPanel";
-import { ThemisTestPanel } from "./components/ThemisTestPanel";
 import { SettingsModal } from "./components/SettingsModal";
-import { AttachedFile, ParsedAnalysis, ThemisTestCase } from "./types";
+import { AttachedFile, ParsedAnalysis } from "./types";
 import { SAMPLE_PROBLEMS } from "./data/sampleProblems";
 import { parseAnalysisMarkdown } from "./utils/parser";
-import { executeDirectGeminiAnalysis } from "./utils/gemini";
+import {
+  detectCodeIo,
+  detectProblemsInText,
+  matchProblemWithCode,
+} from "./utils/problemDetector";
+import {
+  safeSetItem,
+  safeGetItem,
+  safeRemoveItem,
+} from "./utils/safeStorage";
+import { isRealCandidateCode } from "./utils/codeChecker";
 
 export default function App() {
   // Input states
   const [problemText, setProblemText] = useState<string>(() => {
-    return localStorage.getItem("cp_problem_text") || "";
+    return safeGetItem("cp_problem_text") || "";
   });
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [selectedProblemId, setSelectedProblemId] = useState<string | null>(null);
   const [codeText, setCodeText] = useState<string>(() => {
     return (
-      localStorage.getItem("cp_code_text") ||
+      safeGetItem("cp_code_text") ||
       `#include <iostream>
 using namespace std;
 
@@ -47,38 +47,18 @@ int main() {
     );
   });
 
-  // Themis test suite state
-  const [testCases, setTestCases] = useState<ThemisTestCase[]>(() => {
-    const cached = localStorage.getItem("cp_themis_tests");
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {
-        // ignore
-      }
-    }
-    return SAMPLE_PROBLEMS[0].testCases || [];
-  });
-
   const [problemCodeName, setProblemCodeName] = useState<string>(() => {
-    return localStorage.getItem("cp_problem_codename") || "MAXSUB";
-  });
-
-  // Workspace Mode: 'code_analysis' (2 columns: Problem & Code) vs 'test_audit' (3 columns: Problem, Code [optional], & Themis Tests)
-  const [workspaceMode, setWorkspaceMode] = useState<"code_analysis" | "test_audit">(() => {
-    const cached = localStorage.getItem("cp_workspace_mode");
-    return cached === "code_analysis" ? "code_analysis" : "test_audit";
+    return safeGetItem("cp_problem_codename") || "MAXSUB";
   });
 
   // Settings states
   const [userApiKey, setUserApiKey] = useState<string>(() => {
-    return localStorage.getItem("cp_user_api_key") || "";
+    return safeGetItem("cp_user_api_key") || "";
   });
   const [model, setModel] = useState<string>(() => {
-    const saved = localStorage.getItem("cp_selected_model");
-    if (!saved || saved === "gemini-2.5-flash" || saved === "gemini-3.1-flash-lite") {
-      localStorage.setItem("cp_selected_model", "gemini-3.8-flash");
+    const saved = safeGetItem("cp_selected_model");
+    if (!saved || saved.includes("gemini-2.5") || saved.includes("gemini-2.0") || saved.includes("gemini-1.5") || saved.includes("gemini-3.1-pro")) {
+      safeSetItem("cp_selected_model", "gemini-3.8-flash");
       return "gemini-3.8-flash";
     }
     return saved;
@@ -90,9 +70,9 @@ int main() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>("Đang phân tích...");
   const [error, setError] = useState<string | null>(null);
-  const [resultDefaultTab, setResultDefaultTab] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [resultDefaultTab, setResultDefaultTab] = useState<1 | 2 | 3 | 4>(1);
   const [result, setResult] = useState<ParsedAnalysis | null>(() => {
-    const cached = localStorage.getItem("cp_last_analysis");
+    const cached = safeGetItem("cp_last_analysis");
     if (cached) {
       try {
         return parseAnalysisMarkdown(cached);
@@ -119,35 +99,62 @@ int main() {
       });
   }, []);
 
-  // Save drafts to localStorage
+  // Aggregate all problem text (direct input + text extracted from attached documents)
+  const fullProblemText = React.useMemo(() => {
+    let combined = problemText;
+    attachedFiles.forEach((f) => {
+      if (f.extractedText && f.extractedText.trim().length > 0) {
+        combined += `\n\n=== FILE ĐÍNH KÈM: ${f.name} ===\n${f.extractedText.trim()}`;
+      }
+    });
+    return combined;
+  }, [problemText, attachedFiles]);
+
+  // Detect individual problems/questions in contest document
+  const detectedProblems = React.useMemo(() => {
+    return detectProblemsInText(fullProblemText);
+  }, [fullProblemText]);
+
+  // Detect freopen I/O from student code
+  const codeIo = React.useMemo(() => {
+    return detectCodeIo(codeText);
+  }, [codeText]);
+
+  // Match corresponding problem based on freopen I/O or problem code
+  const matchedProblem = React.useMemo(() => {
+    return matchProblemWithCode(detectedProblems, codeText, [], problemCodeName);
+  }, [detectedProblems, codeText, problemCodeName]);
+
+  // Auto-sync problem code name from matched problem or code freopen if appropriate
   useEffect(() => {
-    localStorage.setItem("cp_problem_text", problemText);
+    if (matchedProblem?.problemCode) {
+      setProblemCodeName(matchedProblem.problemCode);
+    } else if (codeIo.problemCode) {
+      setProblemCodeName(codeIo.problemCode);
+    }
+  }, [matchedProblem, codeIo.problemCode]);
+
+  // Save drafts to safeStorage
+  useEffect(() => {
+    safeSetItem("cp_problem_text", problemText);
   }, [problemText]);
 
   useEffect(() => {
-    localStorage.setItem("cp_code_text", codeText);
+    safeSetItem("cp_code_text", codeText);
   }, [codeText]);
 
   useEffect(() => {
-    localStorage.setItem("cp_themis_tests", JSON.stringify(testCases));
-  }, [testCases]);
-
-  useEffect(() => {
-    localStorage.setItem("cp_problem_codename", problemCodeName);
+    safeSetItem("cp_problem_codename", problemCodeName);
   }, [problemCodeName]);
-
-  useEffect(() => {
-    localStorage.setItem("cp_workspace_mode", workspaceMode);
-  }, [workspaceMode]);
 
   const handleSaveApiKey = (key: string) => {
     setUserApiKey(key);
-    localStorage.setItem("cp_user_api_key", key);
+    safeSetItem("cp_user_api_key", key);
   };
 
   const handleSaveModel = (newModel: string) => {
     setModel(newModel);
-    localStorage.setItem("cp_selected_model", newModel);
+    safeSetItem("cp_selected_model", newModel);
   };
 
   // Add files
@@ -164,12 +171,12 @@ int main() {
   const handleClearProblem = () => {
     setProblemText("");
     setAttachedFiles([]);
-    localStorage.removeItem("cp_problem_text");
+    safeRemoveItem("cp_problem_text");
   };
 
   const handleClearCode = () => {
     setCodeText("");
-    localStorage.removeItem("cp_code_text");
+    safeRemoveItem("cp_code_text");
   };
 
   const handleResetAll = () => {
@@ -178,7 +185,7 @@ int main() {
       handleClearCode();
       setResult(null);
       setError(null);
-      localStorage.removeItem("cp_last_analysis");
+      safeRemoveItem("cp_last_analysis");
     }
   };
 
@@ -190,160 +197,122 @@ int main() {
     setProblemText(sample.problemStatement);
     setCodeText(sample.studentCode);
     setAttachedFiles([]);
-    if (sample.testCases) {
-      setTestCases(sample.testCases);
-    }
     if (sample.problemCodeName) {
       setProblemCodeName(sample.problemCodeName);
     }
     setError(null);
   };
 
-  // Trigger analysis call (code analysis or test audit)
-  const handleAnalyze = useCallback(
-    async (actionType: "code" | "test" = "code") => {
-      const hasProblem = problemText.trim().length > 0 || attachedFiles.length > 0;
-      const hasCode = codeText.trim().length > 0;
-      const hasTests = testCases.length > 0;
+  // Trigger code analysis call
+  const handleAnalyze = useCallback(async () => {
+    const hasProblem = problemText.trim().length > 0 || attachedFiles.length > 0;
+    const hasRealCode = isRealCandidateCode(codeText);
 
-      if (actionType === "code") {
-        if (!hasCode) {
-          setError("Vui lòng nhập mã nguồn C++ của học sinh để phân tích và tối ưu.");
-          return;
-        }
-        if (!hasProblem) {
-          setError("Vui lòng cung cấp đề bài (nhập văn bản hoặc tải file đính kèm/ảnh chụp).");
-          return;
-        }
-        setResultDefaultTab(1);
-        setLoadingMessage("Đang phân tích thuật toán & tối ưu mã nguồn C++...");
-      } else {
-        // actionType === "test" (Thẩm định bộ test: có code hoặc không có code chuẩn đều thẩm định được)
-        if (!hasProblem && !hasTests) {
-          setError("Vui lòng cung cấp đề bài hoặc nạp danh sách test case để thẩm định bộ test.");
-          return;
-        }
-        setResultDefaultTab(5);
-        setWorkspaceMode("test_audit"); // Bố cục 3 cột chuyên dùng cho thẩm định test
-        setLoadingMessage(
-          hasCode
-            ? "Đang thẩm định bộ test Themis theo 6 tiêu chuẩn & đối chiếu với code hiện có..."
-            : "Đang thẩm định bộ test Themis độc lập theo đề bài & tạo code chuẩn AC đối chứng..."
-        );
-      }
+    if (!hasProblem && !hasRealCode) {
+      setError("Vui lòng cung cấp đề bài (nhập văn bản hoặc tải file đính kèm) hoặc code C++ để phân tích.");
+      return;
+    }
 
-      setIsLoading(true);
-      setError(null);
+    setResultDefaultTab(1);
+    setLoadingMessage(
+      hasRealCode
+        ? "Đang phân tích thuật toán & tối ưu mã nguồn C++..."
+        : "Cột 2 chưa có code: AI đang phân tích đề bài, hướng dẫn thuật toán từng bước & tạo mã nguồn C++ Full AC 100%..."
+    );
 
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const selectedProblem = detectedProblems.find((p) => p.id === selectedProblemId);
+      const activeProblem = selectedProblem || matchedProblem;
+
+      const payload: any = {
+        problemText: selectedProblem ? selectedProblem.content : problemText,
+        problemFiles: attachedFiles.map((f) => ({
+          name: f.name,
+          mimeType: f.mimeType,
+          base64: f.base64,
+          extractedText: f.extractedText,
+        })),
+        codeText: hasRealCode ? codeText : "",
+        userApiKey,
+        model,
+        problemCodeName: activeProblem?.problemCode || problemCodeName,
+        selectedQuestionTitle: activeProblem
+          ? `${activeProblem.label}: ${activeProblem.title}`
+          : undefined,
+      };
+
+      let analysisText = "";
+
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const rawText = await response.text();
+      let data: any = null;
       try {
-        const payload = {
-          problemText,
-          problemFiles: attachedFiles.map((f) => ({
-            name: f.name,
-            mimeType: f.mimeType,
-            base64: f.base64,
-            extractedText: f.extractedText,
-          })),
-          codeText: hasCode ? codeText : "",
-          userApiKey,
-          model,
-          problemCodeName,
-          testCases: testCases.map((t) => ({
-            name: t.name,
-            category: t.category,
-            input: t.input,
-            expectedOutput: t.expectedOutput,
-            description: t.description,
-          })),
-        };
-
-        let analysisText = "";
-
-        // 1. First attempt: call backend API endpoint (/api/analyze)
-        let apiSucceeded = false;
-        let serverErrorMessage = "";
-        try {
-          const response = await fetch("/api/analyze", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(payload),
-          });
-
-          const rawText = await response.text();
-          let data: any = null;
-          try {
-            data = JSON.parse(rawText);
-          } catch {
-            data = null;
-          }
-
-          if (response.ok && data && data.success && data.analysis) {
-            analysisText = data.analysis;
-            apiSucceeded = true;
-          } else if (data && data.error) {
-            serverErrorMessage = data.error;
-            if (userApiKey) {
-              console.log("Server error received, trying client-side direct SDK call...");
-            }
-          } else if (!response.ok) {
-            serverErrorMessage = `Lỗi máy chủ (${response.status}): ${rawText || response.statusText}`;
-          }
-        } catch (fetchErr: any) {
-          console.warn("API route fetch issue:", fetchErr?.message);
-          serverErrorMessage = fetchErr?.message || "";
-        }
-
-        // 2. Fallback: If backend endpoint is unavailable or user provided custom key
-        if (!apiSucceeded) {
-          if (userApiKey) {
-            // Execute directly on browser using Gemini SDK
-            const directResult = await executeDirectGeminiAnalysis(payload, userApiKey);
-            analysisText = directResult.analysis;
-          } else if (serverErrorMessage) {
-            throw new Error(serverErrorMessage);
-          } else {
-            throw new Error(
-              "Không nhận được phản hồi từ hệ thống phân tích. Vui lòng thử lại sau vài giây hoặc cấu hình API Key cá nhân trong phần Cài đặt AI (bánh răng)."
-            );
-          }
-        }
-
-        const parsed = parseAnalysisMarkdown(analysisText);
-        setResult(parsed);
-        localStorage.setItem("cp_last_analysis", analysisText);
-
-        // Smooth scroll to results
-        setTimeout(() => {
-          resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 100);
-      } catch (err: any) {
-        setError(err?.message || "Đã xảy ra lỗi không mong muốn khi phân tích.");
-      } finally {
-        setIsLoading(false);
+        data = JSON.parse(rawText);
+      } catch {
+        data = null;
       }
-    },
-    [codeText, problemText, attachedFiles, userApiKey, model, problemCodeName, testCases]
-  );
+
+      if (response.ok && data && data.success && data.analysis) {
+        analysisText = data.analysis;
+      } else if (data && data.error) {
+        throw new Error(data.error);
+      } else if (!response.ok) {
+        if (response.status === 503) {
+          throw new Error(
+            "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 High Demand). Vui lòng nhấn nút 'Thử lại ngay' sau vài giây."
+          );
+        }
+        throw new Error(`Lỗi máy chủ (${response.status}): ${rawText || response.statusText}`);
+      } else {
+        throw new Error("Không nhận được phản hồi từ hệ thống phân tích AI. Vui lòng thử lại.");
+      }
+
+      const parsed = parseAnalysisMarkdown(analysisText);
+      setResult(parsed);
+      safeSetItem("cp_last_analysis", analysisText);
+
+      // Smooth scroll to results
+      setTimeout(() => {
+        resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    } catch (err: any) {
+      setError(err?.message || "Đã xảy ra lỗi không mong muốn khi phân tích.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    codeText,
+    problemText,
+    attachedFiles,
+    userApiKey,
+    model,
+    problemCodeName,
+    detectedProblems,
+    selectedProblemId,
+    matchedProblem,
+  ]);
 
   // Global keyboard shortcut: Ctrl+Enter or Cmd+Enter to run analysis
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        if (workspaceMode === "test_audit") {
-          handleAnalyze("test");
-        } else {
-          handleAnalyze("code");
-        }
+        handleAnalyze();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleAnalyze, workspaceMode]);
-
-  const canAnalyze = codeText.trim().length > 0 && (problemText.trim().length > 0 || attachedFiles.length > 0);
+  }, [handleAnalyze]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -358,13 +327,12 @@ int main() {
 
       {/* Main Workspace */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-5 space-y-5">
-        {/* Sample Problems Bar + Mode Switcher */}
+        {/* Sample Problems Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/70 border border-slate-800 rounded-xl text-xs">
-          {/* Sample quick buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-slate-300 flex items-center gap-1.5 mr-1">
               <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-              Đề mẫu có sẵn bộ test Themis:
+              Đề mẫu rèn luyện thuật toán:
             </span>
             {SAMPLE_PROBLEMS.map((sample) => (
               <button
@@ -373,151 +341,70 @@ int main() {
                 className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-indigo-600 hover:text-white border border-slate-700/60 text-slate-300 transition-all active:scale-95 cursor-pointer font-medium flex items-center gap-1.5"
               >
                 <span>{sample.title}</span>
-                {sample.testCases && (
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-500/20 text-indigo-300">
-                    {sample.testCases.length} tests
-                  </span>
-                )}
               </button>
             ))}
           </div>
+        </div>
 
-          {/* Mode Switcher: 2 Columns for Code Analysis vs 3 Columns for Test Audit */}
-          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => setWorkspaceMode("code_analysis")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium text-xs transition-all cursor-pointer ${
-                workspaceMode === "code_analysis"
-                  ? "bg-indigo-600 text-white shadow-sm font-semibold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Chế độ 2 cột: Tập trung vào Đề bài & Code C++ học sinh"
-            >
-              <FileCode className="w-3.5 h-3.5" />
-              <span>Phân tích Code (2 Cột)</span>
-            </button>
+        {/* 2-Column Workspace Layout */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-2 text-xs text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded-lg py-1.5">
+            <span className="flex items-center gap-1.5">
+              <FileCode className="w-4 h-4 text-indigo-400 shrink-0" />
+              <strong className="text-indigo-200">Không gian Phân tích Thuật toán & Mã nguồn C++:</strong> Nạp đề bài ở Cột 1 (tự động đọc PDF, Word, Ảnh & AI tự chuẩn hóa đề hiển thị trực tiếp bên dưới) và code C++ học sinh ở Cột 2 để tối ưu và nhận code Full AC.
+            </span>
+          </div>
 
-            <button
-              type="button"
-              onClick={() => setWorkspaceMode("test_audit")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium text-xs transition-all cursor-pointer ${
-                workspaceMode === "test_audit"
-                  ? "bg-gradient-to-r from-cyan-600 to-emerald-600 text-white shadow-sm font-semibold"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title="Chế độ 3 cột: Dành riêng cho Thẩm định Bộ Test Themis (Đề bài | Code C++ | Bộ test 6 tiêu chí)"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-cyan-200" />
-              <span>Thẩm định Test (3 Cột)</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/30 text-cyan-200 font-mono">
-                {testCases.length} test
-              </span>
-            </button>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+            {/* Column 1: Problem Statement */}
+            <div className="h-[540px] sm:h-[580px]">
+              <ProblemInputPanel
+                problemText={problemText}
+                onChangeProblemText={setProblemText}
+                attachedFiles={attachedFiles}
+                onAddFiles={handleAddFiles}
+                onRemoveFile={handleRemoveFile}
+                onClearProblem={handleClearProblem}
+                detectedProblems={detectedProblems}
+                selectedProblemId={selectedProblemId}
+                onSelectProblem={(prob) => setSelectedProblemId(prob ? prob.id : null)}
+                matchedProblem={matchedProblem}
+                codeIo={codeIo}
+                userApiKey={userApiKey}
+                model={model}
+                onReformulateSuccess={(newText, codeName) => {
+                  setProblemText(newText);
+                  if (codeName) setProblemCodeName(codeName);
+                }}
+              />
+            </div>
+
+            {/* Column 2: Student C++ Code */}
+            <div className="h-[540px] sm:h-[580px]">
+              <CodeInputPanel
+                codeText={codeText}
+                onChangeCodeText={setCodeText}
+                onClearCode={handleClearCode}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Input Panels Section */}
-        {workspaceMode === "test_audit" ? (
-          /* 3-Column Layout: Specifically for Test Suite Audit (Problem | Code [optional] | Themis Tests) */
-          <div className="space-y-2">
-            <div className="flex items-center justify-between px-2 text-xs text-cyan-300/80 bg-cyan-950/30 border border-cyan-900/40 rounded-lg py-1.5">
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
-                <strong className="text-cyan-200">Chế độ Thẩm định Bộ Test (Bố cục 3 Cột):</strong> Có code học sinh hoặc không có code chuẩn đều thẩm định được! AI sẽ tự động sinh mã nguồn AC làm chuẩn đối chiếu.
-              </span>
-              <span className="text-[11px] text-slate-400 hidden md:inline">
-                {testCases.length} testcase đang sẵn sàng
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-              {/* Column 1: Problem Statement */}
-              <div className="h-[540px] sm:h-[580px]">
-                <ProblemInputPanel
-                  problemText={problemText}
-                  onChangeProblemText={setProblemText}
-                  attachedFiles={attachedFiles}
-                  onAddFiles={handleAddFiles}
-                  onRemoveFile={handleRemoveFile}
-                  onClearProblem={handleClearProblem}
-                />
-              </div>
-
-              {/* Column 2: C++ Code (Optional in Test Audit Mode) */}
-              <div className="h-[540px] sm:h-[580px]">
-                <CodeInputPanel
-                  codeText={codeText}
-                  onChangeCodeText={setCodeText}
-                  onClearCode={handleClearCode}
-                  isOptional={true}
-                />
-              </div>
-
-              {/* Column 3: Themis Test Suite (6 Criteria) */}
-              <div className="h-[540px] sm:h-[580px]">
-                <ThemisTestPanel
-                  testCases={testCases}
-                  onChangeTestCases={setTestCases}
-                  problemCodeName={problemCodeName}
-                  onChangeProblemCodeName={setProblemCodeName}
-                  problemStatement={problemText}
-                  studentCode={codeText}
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* 2-Column Layout: Focused on Problem & Student Code */
-          <div className="space-y-2">
-            <div className="flex items-center justify-between px-2 text-xs text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded-lg py-1.5">
-              <span className="flex items-center gap-1.5">
-                <FileCode className="w-4 h-4 text-indigo-400 shrink-0" />
-                <strong className="text-indigo-200">Phân tích & Tối ưu Code (Bố cục 2 Cột):</strong> Nhập đề bài và code C++ học sinh để kiểm tra thuật toán, bắt lỗi TLE/WA/Tràn số và nhận code Full AC.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-              {/* Column 1: Problem Statement */}
-              <div className="h-[540px] sm:h-[580px]">
-                <ProblemInputPanel
-                  problemText={problemText}
-                  onChangeProblemText={setProblemText}
-                  attachedFiles={attachedFiles}
-                  onAddFiles={handleAddFiles}
-                  onRemoveFile={handleRemoveFile}
-                  onClearProblem={handleClearProblem}
-                />
-              </div>
-
-              {/* Column 2: Student C++ Code */}
-              <div className="h-[540px] sm:h-[580px]">
-                <CodeInputPanel
-                  codeText={codeText}
-                  onChangeCodeText={setCodeText}
-                  onClearCode={handleClearCode}
-                  isOptional={false}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Action Buttons Section */}
+        {/* Action Button Section */}
         <div className="flex flex-col items-center justify-center py-3 space-y-3">
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            {/* Button 1: Code Analysis & Optimization */}
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {/* Direct Analysis Button */}
             <button
               type="button"
-              onClick={() => handleAnalyze("code")}
-              disabled={isLoading || !codeText.trim() || (!problemText.trim() && attachedFiles.length === 0)}
-              className={`group relative flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl font-bold text-sm text-white shadow-xl transition-all cursor-pointer ${
-                isLoading || !codeText.trim() || (!problemText.trim() && attachedFiles.length === 0)
+              onClick={handleAnalyze}
+              disabled={isLoading || (!problemText.trim() && attachedFiles.length === 0 && !codeText.trim())}
+              className={`group relative flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-2xl font-bold text-sm text-white shadow-xl transition-all cursor-pointer ${
+                isLoading || (!problemText.trim() && attachedFiles.length === 0 && !codeText.trim())
                   ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60"
                   : "bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 shadow-indigo-600/30 active:scale-98"
               }`}
             >
-              {isLoading && resultDefaultTab === 1 ? (
+              {isLoading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   <span>{loadingMessage}</span>
@@ -525,56 +412,18 @@ int main() {
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 text-indigo-200 group-hover:rotate-12 transition-transform" />
-                  <span>Phân tích & Tối ưu Code</span>
+                  <div className="flex flex-col text-left">
+                    <span className="leading-tight">Phân tích & Tối ưu Code</span>
+                    <span className="text-[10px] font-normal text-indigo-200/90 leading-tight">
+                      Thiếu hoặc code sai vẫn phân tích đủ các bước & tạo mã Full AC
+                    </span>
+                  </div>
                   <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-white/20 text-[11px] font-mono tracking-tight text-white/90">
                     Ctrl + Enter
                   </span>
                 </>
               )}
             </button>
-
-            {/* Button 2: Test Suite Audit (ONLY visible in 3-column Test Audit mode) */}
-            {workspaceMode === "test_audit" && (
-              <button
-                type="button"
-                onClick={() => handleAnalyze("test")}
-                disabled={isLoading || (!problemText.trim() && attachedFiles.length === 0 && testCases.length === 0)}
-                className={`group relative flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl font-bold text-sm text-white shadow-xl transition-all cursor-pointer ${
-                  isLoading || (!problemText.trim() && attachedFiles.length === 0 && testCases.length === 0)
-                    ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60"
-                    : "bg-gradient-to-r from-cyan-600 via-teal-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 shadow-cyan-600/30 active:scale-98"
-                }`}
-                title="Thẩm định bộ test theo 6 tiêu chuẩn vàng (có code hoặc không có code chuẩn đều thẩm định được)"
-              >
-                {isLoading && resultDefaultTab === 5 ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>{loadingMessage}</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4 text-emerald-200 group-hover:scale-110 transition-transform" />
-                    <div className="flex flex-col text-left">
-                      <span className="leading-tight">Thẩm định Bộ Test (6 Tiêu chí)</span>
-                      <span className="text-[10px] font-normal text-emerald-200/90 leading-tight">
-                        Có code hoặc không có code chuẩn đều được
-                      </span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-md bg-black/20 text-[11px] font-mono tracking-tight text-emerald-200">
-                      {testCases.length} test
-                    </span>
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-500">
-            {workspaceMode === "code_analysis" ? (
-              <span>💡 <strong>Mẹo:</strong> Bấm <em>"Phân tích & Tối ưu Code"</em> (hoặc nhấn Ctrl + Enter) để AI rà soát lỗi logic, TLE, tràn số int và viết lại code C++ Full AC.</span>
-            ) : (
-              <span>💡 <strong>Mẹo:</strong> Bấm <em>"Thẩm định Bộ Test (6 Tiêu chí)"</em> để AI chấm điểm test biên, tràn số, subtask và tự sinh code AC đối chứng ngay cả khi chưa có code.</span>
-            )}
           </div>
         </div>
 
@@ -584,12 +433,10 @@ int main() {
             result={result}
             isLoading={isLoading}
             error={error}
-            onRetry={() => handleAnalyze(resultDefaultTab === 5 ? "test" : "code")}
+            onRetry={handleAnalyze}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            testCases={testCases}
             problemCodeName={problemCodeName}
             defaultTab={resultDefaultTab}
-            workspaceMode={workspaceMode}
           />
         </div>
       </main>
@@ -598,14 +445,14 @@ int main() {
       <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 mt-12">
         <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p>
-            Trợ lý Phân tích Thuật toán & Tối ưu Lập trình — Thiết kế lại Hệ Tiêu Chí Thẩm Định Bộ Test Chuẩn Themis & CMS (6 Tiêu Chí).
+            Trợ lý Phân tích Thuật toán & Tối ưu Lập trình C++ — Hướng dẫn tư duy giải toán, bắt lỗi TLE/Tràn số và cung cấp mã nguồn Full AC.
           </p>
           <div className="flex items-center gap-4 text-slate-400">
             <span>Mô hình: <strong className="text-indigo-400">{model}</strong></span>
             <span>•</span>
-            <span>6 Tiêu chuẩn Bộ Test</span>
+            <span>Tối ưu Fast I/O</span>
             <span>•</span>
-            <span>Xuất ZIP Themis</span>
+            <span>Bắt lỗi Overflow & TLE</span>
             <span>•</span>
             <span>Code C++ Full AC</span>
           </div>

@@ -252,7 +252,7 @@ export async function extractTextFromDoc(arrayBuffer: ArrayBuffer): Promise<stri
 }
 
 /**
- * Extracts plain text from a PDF document using pdfjs-dist
+ * Extracts plain text from a PDF document using pdfjs-dist with layout-aware line ordering
  */
 export async function extractTextFromPdf(arrayBuffer: ArrayBuffer): Promise<string> {
   try {
@@ -268,22 +268,94 @@ export async function extractTextFromPdf(arrayBuffer: ArrayBuffer): Promise<stri
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
-      const pageItems = textContent.items
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((item: any) => item.str || "")
-        .join(" ");
+      
+      // Spatial sorting: group items by Y coordinate (lines) and X coordinate (columns)
+      // transform[4] is X position, transform[5] is Y position
+      interface TextItemWithPos {
+        str: string;
+        x: number;
+        y: number;
+        width?: number;
+        height?: number;
+        hasEOL?: boolean;
+      }
 
-      const trimmed = pageItems.trim().replace(/\s{2,}/g, " ");
-      if (trimmed.length > 0) {
+      const rawItems: TextItemWithPos[] = textContent.items
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((item: any) => ({
+          str: item.str || "",
+          x: item.transform ? item.transform[4] : 0,
+          y: item.transform ? item.transform[5] : 0,
+          width: item.width || 0,
+          height: item.height || 0,
+          hasEOL: item.hasEOL || false,
+        }))
+        .filter((item) => item.str.trim().length > 0);
+
+      if (rawItems.length === 0) {
+        continue;
+      }
+
+      // Group items by line based on Y coordinate tolerance
+      const lines: TextItemWithPos[][] = [];
+      const lineTolerance = 4.0; // points tolerance for same line
+
+      // Sort items top-to-bottom (Y descending)
+      const sortedByY = [...rawItems].sort((a, b) => b.y - a.y);
+
+      for (const item of sortedByY) {
+        let placed = false;
+        for (const line of lines) {
+          if (Math.abs(line[0].y - item.y) <= lineTolerance) {
+            line.push(item);
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          lines.push([item]);
+        }
+      }
+
+      // Sort lines by Y descending, and items within each line by X ascending (left-to-right)
+      lines.sort((a, b) => b[0].y - a[0].y);
+      for (const line of lines) {
+        line.sort((a, b) => a.x - b.x);
+      }
+
+      // Reconstruct clean lines
+      const reconstructedLines = lines.map((line) => {
+        let lineStr = "";
+        let prevX = -1;
+        let prevWidth = 0;
+
+        for (const item of line) {
+          if (prevX >= 0) {
+            const gap = item.x - (prevX + prevWidth);
+            // Add space if items aren't already spaced and there's a visible gap
+            if (gap > 2 && !lineStr.endsWith(" ") && !item.str.startsWith(" ")) {
+              lineStr += " ";
+            }
+          }
+          lineStr += item.str;
+          prevX = item.x;
+          prevWidth = item.width || (item.str.length * 5);
+        }
+
+        return lineStr.trim();
+      }).filter((l) => l.length > 0);
+
+      const pageContent = reconstructedLines.join("\n");
+      if (pageContent.trim().length > 0) {
         pageTexts.push(
-          pdfDoc.numPages > 1 ? `[Trang ${pageNum}/${pdfDoc.numPages}]\n${trimmed}` : trimmed
+          pdfDoc.numPages > 1 ? `[Trang ${pageNum}/${pdfDoc.numPages}]\n${pageContent}` : pageContent
         );
       }
     }
 
     return pageTexts.join("\n\n");
   } catch (err) {
-    console.warn("Không thể trích xuất văn bản từ PDF (có thể là PDF scan ảnh):", err);
+    console.warn("Không thể trích xuất văn bản từ PDF qua pdfjs-dist (có thể là PDF scan ảnh):", err);
     return "";
   }
 }

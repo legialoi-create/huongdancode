@@ -9,7 +9,7 @@ interface MarkdownRendererProps {
 
 // Function to process markdown text containing KaTeX math expressions securely
 function formatTextWithMath(rawText: string): string {
-  if (!rawText) return "";
+  if (!rawText || typeof rawText !== "string") return "";
 
   // 1. Stash Math expressions into placeholders to protect from markdown regex corruption
   const mathPlaceholders: string[] = [];
@@ -130,6 +130,7 @@ export const CodeBlock: React.FC<{ code: string; language?: string }> = ({
 
 // Syntax high-contrast token coloring for C++
 function highlightCppTokens(line: string): React.ReactNode {
+  if (!line || typeof line !== "string") return line;
   // If line is a comment
   if (line.trim().startsWith("//") || line.trim().startsWith("/*") || line.trim().startsWith("*")) {
     return <span className="text-emerald-400/90 italic">{line}</span>;
@@ -242,8 +243,111 @@ function renderFormattedText(text: string): React.ReactNode[] {
     const trimmed = rawLine.trim();
 
     if (!trimmed) {
-      nodes.push(<div key={i} className="h-2" />);
+      nodes.push(<div key={`empty-${i}`} className="h-2" />);
       continue;
+    }
+
+    // Markdown Table Detection: Starts and ends with | or contains |
+    if (trimmed.startsWith("|") && trimmed.endsWith("|") && i + 1 < lines.length) {
+      const nextTrimmed = lines[i + 1].trim();
+      // Check if next line is table separator row: e.g. |:---|:---| or |---|---|
+      if (nextTrimmed.startsWith("|") && /^[\|\s\-:]+$/.test(nextTrimmed)) {
+        const tableHeader = trimmed;
+        const separatorLine = nextTrimmed;
+        const dataRows: string[] = [];
+
+        let j = i + 2;
+        while (j < lines.length && lines[j].trim().startsWith("|") && lines[j].trim().endsWith("|")) {
+          dataRows.push(lines[j].trim());
+          j++;
+        }
+
+        // Parse headers
+        const headerCells = tableHeader
+          .split("|")
+          .slice(1, -1)
+          .map((c) => c.trim());
+
+        // Parse alignments from separator
+        const alignCells = separatorLine
+          .split("|")
+          .slice(1, -1)
+          .map((c) => {
+            const trimmedC = c.trim();
+            if (trimmedC.startsWith(":") && trimmedC.endsWith(":")) return "text-center";
+            if (trimmedC.endsWith(":")) return "text-right";
+            return "text-left";
+          });
+
+        nodes.push(
+          <div key={`table-${i}`} className="my-4 overflow-x-auto rounded-xl border border-slate-700/80 bg-slate-950/80 shadow-xl">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-900 border-b border-slate-800 text-slate-200">
+                  {headerCells.map((h, hIdx) => {
+                    const align = alignCells[hIdx] || "text-left";
+                    return (
+                      <th
+                        key={hIdx}
+                        className={`px-3.5 py-3 font-semibold tracking-wider text-[11px] uppercase text-indigo-300 ${align} border-r border-slate-800/60 last:border-r-0`}
+                        dangerouslySetInnerHTML={{ __html: formatTextWithMath(h) }}
+                      />
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                {dataRows.map((row, rIdx) => {
+                  const rowCells = row
+                    .split("|")
+                    .slice(1, -1)
+                    .map((c) => c.trim());
+
+                  const isPass = row.includes("PASS") || row.includes("✓") || row.includes("Đúng") || row.includes("Khớp 100%");
+                  const isFail = row.includes("WA") || row.includes("MISMATCH") || row.includes("❌") || row.includes("Sai");
+
+                  return (
+                    <tr
+                      key={rIdx}
+                      className={`transition-colors hover:bg-slate-800/40 ${
+                        isFail
+                          ? "bg-rose-950/20"
+                          : rIdx % 2 === 0
+                          ? "bg-slate-900/30"
+                          : "bg-slate-950/30"
+                      }`}
+                    >
+                      {headerCells.map((_, cIdx) => {
+                        const cellVal = rowCells[cIdx] || "";
+                        const align = alignCells[cIdx] || "text-left";
+
+                        // Special badge styling for status cells
+                        let cellContent = formatTextWithMath(cellVal);
+                        if (cellVal === "PASS" || cellVal === "✓" || cellVal === "✓ PASS" || cellVal === "ĐÚNG") {
+                          cellContent = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40">✓ PASS</span>`;
+                        } else if (cellVal.includes("WA") || cellVal.includes("❌") || cellVal.includes("MISMATCH") || cellVal.includes("SAI")) {
+                          cellContent = `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-500/40">❌ WA</span>`;
+                        }
+
+                        return (
+                          <td
+                            key={cIdx}
+                            className={`px-3.5 py-2.5 text-slate-300 ${align} border-r border-slate-800/40 last:border-r-0`}
+                            dangerouslySetInnerHTML={{ __html: cellContent }}
+                          />
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+
+        i = j - 1; // Skip past table rows
+        continue;
+      }
     }
 
     // Headings
