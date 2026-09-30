@@ -3,12 +3,14 @@ import {
   Sparkles,
   BookOpen,
   FileCode,
+  Lock,
 } from "lucide-react";
 import { Header } from "./components/Header";
 import { ProblemInputPanel } from "./components/ProblemInputPanel";
 import { CodeInputPanel } from "./components/CodeInputPanel";
 import { ResultPanel } from "./components/ResultPanel";
 import { SettingsModal } from "./components/SettingsModal";
+import { LoginModal } from "./components/LoginModal";
 import { AttachedFile, ParsedAnalysis } from "./types";
 import { SAMPLE_PROBLEMS } from "./data/sampleProblems";
 import { parseAnalysisMarkdown } from "./utils/parser";
@@ -25,6 +27,21 @@ import {
 import { isRealCandidateCode } from "./utils/codeChecker";
 
 export default function App() {
+  // Authentication state
+  const [currentUser, setCurrentUser] = useState<string | null>(() => {
+    return safeGetItem("cp_auth_user") || null;
+  });
+
+  const handleLoginSuccess = (username: string) => {
+    setCurrentUser(username);
+    safeSetItem("cp_auth_user", username);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    safeRemoveItem("cp_auth_user");
+  };
+
   // Input states
   const [problemText, setProblemText] = useState<string>(() => {
     return safeGetItem("cp_problem_text") || "";
@@ -65,6 +82,7 @@ int main() {
   });
   const [hasEnvKey, setHasEnvKey] = useState<boolean>(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
 
   // Analysis states
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -307,15 +325,17 @@ int main() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        handleAnalyze();
+        if (currentUser) {
+          handleAnalyze();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleAnalyze]);
+  }, [handleAnalyze, currentUser]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans animate-in fade-in duration-300">
       {/* Top Header */}
       <Header
         onSelectSample={handleSelectSample}
@@ -323,6 +343,9 @@ int main() {
         onReset={handleResetAll}
         hasApiKey={!!userApiKey || hasEnvKey}
         selectedModel={model}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onLoginSuccess={handleLoginSuccess}
       />
 
       {/* Main Workspace */}
@@ -391,16 +414,24 @@ int main() {
         </div>
 
         {/* Action Button Section */}
-        <div className="flex flex-col items-center justify-center py-3 space-y-3">
+        <div className="flex flex-col items-center justify-center py-3 space-y-4">
           <div className="flex flex-wrap items-center justify-center gap-3">
             {/* Direct Analysis Button */}
             <button
               type="button"
-              onClick={handleAnalyze}
+              onClick={() => {
+                if (!currentUser) {
+                  setIsLoginModalOpen(true);
+                  return;
+                }
+                handleAnalyze();
+              }}
               disabled={isLoading || (!problemText.trim() && attachedFiles.length === 0 && !codeText.trim())}
               className={`group relative flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-2xl font-bold text-sm text-white shadow-xl transition-all cursor-pointer ${
                 isLoading || (!problemText.trim() && attachedFiles.length === 0 && !codeText.trim())
                   ? "bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed opacity-60"
+                  : !currentUser
+                  ? "bg-slate-800 hover:bg-slate-750 text-slate-300 border border-indigo-500/40 hover:border-indigo-400 active:scale-98"
                   : "bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 shadow-indigo-600/30 active:scale-98"
               }`}
             >
@@ -408,6 +439,16 @@ int main() {
                 <>
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   <span>{loadingMessage}</span>
+                </>
+              ) : !currentUser ? (
+                <>
+                  <Lock className="w-4 h-4 text-indigo-400" />
+                  <div className="flex flex-col text-left">
+                    <span className="leading-tight">Đăng nhập để Phân tích & Tối ưu Code</span>
+                    <span className="text-[10px] font-normal text-indigo-300/80 leading-tight">
+                      Nhập tài khoản ở ô trên cùng bên trái
+                    </span>
+                  </div>
                 </>
               ) : (
                 <>
@@ -468,6 +509,13 @@ int main() {
         model={model}
         onSaveModel={handleSaveModel}
         hasEnvKey={hasEnvKey}
+      />
+
+      {/* Login Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onLoginSuccess={handleLoginSuccess}
       />
     </div>
   );
