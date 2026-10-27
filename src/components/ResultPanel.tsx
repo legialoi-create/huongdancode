@@ -14,6 +14,8 @@ import {
   Zap,
   RefreshCw,
   Loader2,
+  Columns,
+  ArrowUpRight,
 } from "lucide-react";
 import { ParsedAnalysis } from "../types";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -27,6 +29,8 @@ interface ResultPanelProps {
   onOpenSettings: () => void;
   problemCodeName?: string;
   defaultTab?: 1 | 2 | 3 | 4;
+  studentCode?: string;
+  onApplyAcCode?: (acCode: string) => void;
 }
 
 export const ResultPanel: React.FC<ResultPanelProps> = ({
@@ -37,6 +41,8 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   onOpenSettings,
   problemCodeName = "BAI",
   defaultTab = 1,
+  studentCode = "",
+  onApplyAcCode,
 }) => {
   const [activeTab, setActiveTab] = useState<1 | 2 | 3 | 4>(defaultTab);
 
@@ -47,8 +53,11 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   }, [defaultTab]);
 
   const [viewMode, setViewMode] = useState<"tabs" | "full">("tabs");
+  const [tab4View, setTab4View] = useState<"ac" | "compare">("ac");
   const [copiedAc, setCopiedAc] = useState(false);
+  const [appliedAc, setAppliedAc] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Copy full AC code directly
   const handleCopyAcCode = () => {
@@ -56,6 +65,15 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
       navigator.clipboard.writeText(result.acCodeOnly);
       setCopiedAc(true);
       setTimeout(() => setCopiedAc(false), 2000);
+    }
+  };
+
+  // Apply AC code directly into Column 2 editor
+  const handleApplyToEditor = () => {
+    if (result?.acCodeOnly && onApplyAcCode) {
+      onApplyAcCode(result.acCodeOnly);
+      setAppliedAc(true);
+      setTimeout(() => setAppliedAc(false), 2000);
     }
   };
 
@@ -76,6 +94,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   // Download Word .docx file
   const handleDownloadDocx = async (targetSectionOnly?: "section3" | "all") => {
     if (!result) return;
+    setExportError(null);
     try {
       setIsExportingDocx(true);
       await downloadAnalysisDocx({
@@ -90,7 +109,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
       });
     } catch (err) {
       console.error("Lỗi xuất file Word:", err);
-      alert("Đã xảy ra lỗi khi tạo file Word (.docx). Vui lòng thử lại.");
+      setExportError("Không thể tạo file Word (.docx). Vui lòng thử lại.");
     } finally {
       setIsExportingDocx(false);
     }
@@ -165,43 +184,32 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
 
   // Error state
   if (error) {
-    const isApiKeyError =
-      error.toLowerCase().includes("api key") ||
-      error.toLowerCase().includes("unauthenticated") ||
-      error.toLowerCase().includes("401");
-
     return (
       <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-slate-900/60 border border-rose-900/40 rounded-2xl min-h-[460px] text-center">
         <div className="w-14 h-14 rounded-2xl bg-rose-600/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4">
           <AlertTriangle className="w-7 h-7" />
         </div>
         <h3 className="text-lg font-bold text-white mb-2">Không thể hoàn thành phân tích</h3>
-        <p
-          className={`text-xs sm:text-sm ${
-            isApiKeyError
-              ? "text-amber-200/90 bg-amber-950/50 border-amber-800/40"
-              : "text-rose-300/90 bg-rose-950/50 border-rose-800/40"
-          } max-w-lg mb-6 leading-relaxed p-3.5 rounded-xl border`}
-        >
+        <p className="text-xs sm:text-sm text-rose-300/90 bg-rose-950/50 border-rose-800/40 max-w-lg mb-6 leading-relaxed p-3.5 rounded-xl border">
           {error}
         </p>
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           <button
+            type="button"
             onClick={onRetry}
             className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-2"
           >
             <RefreshCw className="w-4 h-4" />
             <span>Thử lại ngay</span>
           </button>
-          {isApiKeyError && (
-            <button
-              onClick={onOpenSettings}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 transition-all cursor-pointer"
-            >
-              Mở Cài đặt API Key
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 transition-all cursor-pointer"
+          >
+            Đổi Mô hình AI
+          </button>
         </div>
       </div>
     );
@@ -210,13 +218,13 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   // Empty state before any analysis is run
   if (!result || !result.rawMarkdown) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl min-h-[460px] text-center">
+      <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl min-h-[420px] text-center">
         <div className="w-14 h-14 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4">
           <Terminal className="w-7 h-7" />
         </div>
         <h3 className="text-lg font-bold text-white mb-2">Bảng kết quả phân tích & Code tối ưu</h3>
         <p className="text-xs sm:text-sm text-slate-400 max-w-md mb-6 leading-relaxed">
-          Nhập đề bài ở khung bên trái, code C++ của học sinh ở khung bên phải, sau đó bấm nút{" "}
+          Nhập đề bài ở Cột 1, code C++ của học sinh ở Cột 2, sau đó bấm nút{" "}
           <strong className="text-indigo-400 font-semibold">"Phân tích & Tối ưu Code"</strong> để nhận đánh giá chi tiết theo từng bước.
         </p>
 
@@ -259,7 +267,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   // Active result state
   return (
     <div className="flex flex-col bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
-      {/* Result Header & Overview Tags */}
+      {/* Result Header & Overview Metadata */}
       <div className="p-4 sm:p-5 bg-slate-900 border-b border-slate-800 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -267,15 +275,19 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                Báo cáo Phân tích Thuật toán & Mã nguồn
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base font-bold text-white">
+                  Báo cáo Phân tích Thuật toán & Mã nguồn
+                </h2>
                 {result.estimatedScore && (
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    Ước tính pass: {result.estimatedScore}
+                  <span className="text-xs font-semibold text-amber-300">
+                    · Ước tính pass: {result.estimatedScore}
                   </span>
                 )}
-              </h2>
-              <p className="text-xs text-slate-400">Được tạo bởi Gemini AI chuyên sâu cho Lập trình Thi đấu</p>
+              </div>
+              <p className="text-xs text-slate-400">
+                Mã bài: <span className="font-mono text-indigo-300 font-semibold">{problemCodeName}.INP / {problemCodeName}.OUT</span>
+              </p>
             </div>
           </div>
 
@@ -319,7 +331,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                 title="Tải file solution_full_ac.cpp"
               >
                 <Download className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden sm:inline">Tải file .cpp</span>
+                <span className="hidden sm:inline">Tải .cpp</span>
               </button>
             )}
 
@@ -328,7 +340,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setViewMode("tabs")}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${
                   viewMode === "tabs" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -337,7 +349,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setViewMode("full")}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${
                   viewMode === "full" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
@@ -347,27 +359,24 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
           </div>
         </div>
 
-        {/* Detected Tags Bar */}
+        {/* Clean Unboxed Metadata Tags */}
         {result.detectedTags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <span className="text-[11px] text-slate-400 font-semibold mr-1">Nhận diện điểm nhấn:</span>
+          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-slate-400">
+            <span className="font-semibold text-slate-300">Trọng tâm kỹ thuật:</span>
             {result.detectedTags.map((tag, i) => (
-              <span
-                key={i}
-                className={`px-2 py-0.5 rounded-md text-[11px] font-medium flex items-center gap-1 ${
-                  tag.includes("không khớp")
-                    ? "bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold animate-pulse"
-                    : "bg-indigo-950/60 border border-indigo-700/50 text-indigo-300"
-                }`}
-              >
-                {tag.includes("không khớp") ? (
-                  <AlertTriangle className="w-3 h-3 text-amber-400" />
-                ) : (
-                  <Zap className="w-2.5 h-2.5 text-indigo-400" />
-                )}
-                {tag}
-              </span>
+              <React.Fragment key={i}>
+                {i > 0 && <span aria-hidden="true">·</span>}
+                <span className={tag.includes("không khớp") ? "text-amber-300 font-semibold" : "text-indigo-300"}>
+                  {tag}
+                </span>
+              </React.Fragment>
             ))}
+          </div>
+        )}
+
+        {exportError && (
+          <div className="p-2.5 rounded-xl bg-rose-950/50 border border-rose-800/50 text-xs text-rose-300">
+            {exportError}
           </div>
         )}
 
@@ -398,7 +407,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>Tab 1: Tóm tắt & Đánh giá</span>
+            <span>1. Tóm tắt & Đánh giá</span>
           </button>
 
           <button
@@ -411,7 +420,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             }`}
           >
             <AlertTriangle className="w-4 h-4 text-rose-400" />
-            <span>Tab 2: Chi tiết lỗi & Điểm nghẽn</span>
+            <span>2. Chi tiết lỗi & Điểm nghẽn</span>
           </button>
 
           <button
@@ -424,7 +433,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             }`}
           >
             <Lightbulb className="w-4 h-4 text-amber-400" />
-            <span>Tab 3: Hướng dẫn sửa từng bước</span>
+            <span>3. Hướng dẫn sửa từng bước</span>
           </button>
 
           <button
@@ -437,7 +446,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             }`}
           >
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>Tab 4: Code chuẩn Full AC</span>
+            <span>4. Code chuẩn Full AC</span>
           </button>
         </div>
       )}
@@ -449,7 +458,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
             <MarkdownRenderer content={result.rawMarkdown} />
 
             {/* Download Word Document Box at the end of Full view */}
-            <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/70 via-indigo-950/50 to-slate-900 border border-blue-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+            <div className="p-4 rounded-xl bg-slate-950/90 border border-blue-500/30 flex flex-wrap items-center justify-between gap-3 shadow-lg">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-base shrink-0">
                   W
@@ -459,7 +468,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                     Tải toàn bộ tài liệu Báo cáo & Hướng dẫn (.docx)
                   </h4>
                   <p className="text-xs text-slate-400">
-                    File Word chuẩn gồm Phân tích đề bài, Vị trí lỗi sai, Hướng dẫn sửa từng bước và Mã nguồn C++ Full AC
+                    File Word chuẩn gồm Phân tích đề bài, Vị trí lỗi sai, Hướng dẫn sửa từng bước (LaTeX $...$) và Mã nguồn C++ Full AC
                   </p>
                 </div>
               </div>
@@ -468,7 +477,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                 type="button"
                 onClick={() => handleDownloadDocx("all")}
                 disabled={isExportingDocx}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-md shadow-blue-600/20 active:scale-95 transition-all cursor-pointer flex items-center gap-2"
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md active:scale-95 transition-all cursor-pointer flex items-center gap-2"
               >
                 {isExportingDocx ? (
                   <>
@@ -503,7 +512,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                 <div className="p-3.5 rounded-xl bg-rose-950/30 border border-rose-800/40 text-xs text-rose-200 flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
                   <span>
-                    Chỉ rõ các dòng bị tràn số int, tính toán nguy cơ TLE, lỗi khởi tạo mảng, và thiếu tối ưu Fast I/O (`cin.tie`).
+                    Chỉ rõ các dòng bị tràn số int, tính toán nguy cơ TLE, lỗi khởi tạo mảng, và kiểm tra File I/O (`freopen`).
                   </span>
                 </div>
                 <MarkdownRenderer content={result.section2_Flaws} />
@@ -522,7 +531,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                 <MarkdownRenderer content={result.section3_Guide} />
 
                 {/* Prominent Word Download Card right after Section 4 */}
-                <div className="mt-6 p-4 rounded-xl bg-gradient-to-r from-blue-950/70 via-indigo-950/50 to-slate-900 border border-blue-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xl">
+                <div className="mt-6 p-4 rounded-xl bg-slate-950/90 border border-blue-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xl">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-base shrink-0">
                       W
@@ -532,18 +541,29 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                         Tải tài liệu Hướng dẫn từng bước & Tư duy thuật toán (.docx)
                       </h4>
                       <p className="text-xs text-slate-400">
-                        Xuất file Microsoft Word (.docx) định dạng chuẩn giáo án, bảng biểu, công thức toán và mã nguồn C++
+                        Xuất file Microsoft Word (.docx) giữ chuẩn công thức LaTeX $...$ và khối mã nguồn C++ Full AC
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadDocx("section3")}
+                      disabled={isExportingDocx}
+                      className="px-3.5 py-2 rounded-xl text-xs font-semibold text-blue-200 bg-blue-950/70 hover:bg-blue-900 border border-blue-700/60 transition-all cursor-pointer flex items-center gap-1.5"
+                      title="Chỉ tải riêng Mục 4 (Hướng dẫn giải) kèm Code AC"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Tải riêng Mục 4 (.docx)</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => handleDownloadDocx("all")}
                       disabled={isExportingDocx}
-                      className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 shadow-md shadow-blue-600/20 active:scale-95 transition-all cursor-pointer flex items-center gap-2"
-                      title="Tải file Word toàn bộ bài học và hướng dẫn giải"
+                      className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md active:scale-95 transition-all cursor-pointer flex items-center gap-2"
+                      title="Tải file Word toàn bộ 5 mục bài học và hướng dẫn giải"
                     >
                       {isExportingDocx ? (
                         <>
@@ -553,7 +573,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
                       ) : (
                         <>
                           <Download className="w-4 h-4" />
-                          <span>Tải file Word (.docx)</span>
+                          <span>Tải toàn bộ Báo cáo (.docx)</span>
                         </>
                       )}
                     </button>
@@ -564,24 +584,87 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
 
             {activeTab === 4 && (
               <div className="space-y-4">
-                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-200 flex items-center justify-between gap-2">
+                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-200 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                     <span>
-                      Mã nguồn C++ Full AC: Giữ nguyên 100% tên biến gốc của học sinh, biến mới đặt ngắn gọn (1-3 ký tự quen thuộc), chuẩn File I/O (freopen) theo đề bài và chú thích rõ ràng từng dòng sửa.
+                      Mã nguồn C++ Full AC: Giữ nguyên tên biến quen thuộc của học sinh, chuẩn File I/O (`{problemCodeName}.INP/.OUT`) và chú thích rõ từng vị trí tối ưu.
                     </span>
                   </div>
-                  {result.acCodeOnly && (
-                    <button
-                      type="button"
-                      onClick={handleCopyAcCode}
-                      className="flex-shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all active:scale-95 cursor-pointer"
-                    >
-                      {copiedAc ? "Đã sao chép!" : "Copy Code"}
-                    </button>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {studentCode.trim().length > 0 && result.acCodeOnly && (
+                      <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setTab4View("ac")}
+                          className={`px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                            tab4View === "ac" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          Code Full AC
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTab4View("compare")}
+                          className={`px-2.5 py-1 rounded-md font-medium transition-all cursor-pointer flex items-center gap-1 ${
+                            tab4View === "compare" ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <Columns className="w-3 h-3" />
+                          <span>Đối chiếu 2 bên</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {result.acCodeOnly && onApplyAcCode && (
+                      <button
+                        type="button"
+                        onClick={handleApplyToEditor}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+                        title="Đưa code Full AC lên Cột 2"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>{appliedAc ? "Đã nạp lên Cột 2!" : "Nạp lên Cột 2"}</span>
+                      </button>
+                    )}
+
+                    {result.acCodeOnly && (
+                      <button
+                        type="button"
+                        onClick={handleCopyAcCode}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-all active:scale-95 cursor-pointer"
+                      >
+                        {copiedAc ? "Đã sao chép!" : "Copy Code"}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <MarkdownRenderer content={result.section4_FullAcCode} />
+
+                {tab4View === "compare" && studentCode.trim().length > 0 && result.acCodeOnly ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-slate-950 border border-rose-900/40 rounded-xl overflow-hidden flex flex-col">
+                      <div className="px-3.5 py-2 bg-rose-950/30 border-b border-rose-900/30 text-xs font-bold text-rose-300 flex items-center justify-between">
+                        <span>Code C++ ban đầu của học sinh</span>
+                        <span className="text-[11px] font-mono text-rose-400/80">{studentCode.split("\n").length} dòng</span>
+                      </div>
+                      <pre className="p-3.5 text-xs font-mono text-slate-300 overflow-x-auto leading-relaxed max-h-[520px] overflow-y-auto">
+                        {studentCode}
+                      </pre>
+                    </div>
+
+                    <div className="bg-slate-950 border border-emerald-800/50 rounded-xl overflow-hidden flex flex-col">
+                      <div className="px-3.5 py-2 bg-emerald-950/30 border-b border-emerald-900/30 text-xs font-bold text-emerald-300 flex items-center justify-between">
+                        <span>Code C++ Full AC đã tối ưu (100/100 điểm)</span>
+                        <span className="text-[11px] font-mono text-emerald-400/80">{result.acCodeOnly.split("\n").length} dòng</span>
+                      </div>
+                      <pre className="p-3.5 text-xs font-mono text-emerald-100 overflow-x-auto leading-relaxed max-h-[520px] overflow-y-auto">
+                        {result.acCodeOnly}
+                      </pre>
+                    </div>
+                  </div>
+                ) : (
+                  <MarkdownRenderer content={result.section4_FullAcCode} />
+                )}
               </div>
             )}
           </div>
@@ -590,4 +673,3 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
     </div>
   );
 };
-

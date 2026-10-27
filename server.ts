@@ -568,13 +568,42 @@ Nhiệm vụ của bạn là nhận đề bài (có thể là 1 bài riêng lẻ
         }
       }
 
+      const codeName = (problemCodeName || "MAXSUB").trim().toUpperCase();
+
+      // Automated C++ static pre-scanner to highlight potential issues for the AI
+      const staticSignals: string[] = [];
+      if (hasRealCode && codeText) {
+        const hasFreopen = /freopen\s*\(/i.test(codeText);
+        if (!hasFreopen) {
+          staticSignals.push(`- Thiếu lệnh mở tệp freopen("${codeName}.INP", "r", stdin) và freopen("${codeName}.OUT", "w", stdout).`);
+        } else {
+          const inpRegex = new RegExp(`${codeName}\\.INP`, "i");
+          const outRegex = new RegExp(`${codeName}\\.OUT`, "i");
+          if (!inpRegex.test(codeText) || !outRegex.test(codeText)) {
+            staticSignals.push(`- Tên tệp trong freopen của code có thể chưa khớp với "${codeName}.INP" / "${codeName}.OUT".`);
+          }
+        }
+        if (!/sync_with_stdio/i.test(codeText) || !/cin\.tie/i.test(codeText)) {
+          staticSignals.push(`- Chưa bật tối ưu nhập xuất nhanh (ios_base::sync_with_stdio(false); cin.tie(NULL);).`);
+        }
+        if (/\bendl\b/.test(codeText)) {
+          staticSignals.push(`- Đang sử dụng 'endl' có thể gây chậm I/O (TLE) khi in nhiều dòng, nên thay bằng '\\n'.`);
+        }
+        if (!/\blong\s+long\b/.test(codeText) && !/\bint64_t\b/.test(codeText)) {
+          staticSignals.push(`- Toàn bộ biến nguyên đang dùng kiểu 'int' 32-bit, cần kiểm tra kỹ nguy cơ tràn số (Integer Overflow > 2*10^9) khi tính tổng hoặc tích.`);
+        }
+      }
+
+      const staticSignalsBlock =
+        staticSignals.length > 0
+          ? `\n🔍 CẢNH BÁO TỪ BỘ QUÉT TĨNH C++ (STATIC DIAGNOSTICS):\n${staticSignals.join("\n")}\n`
+          : "";
+
       const studentCodeSection = hasRealCode
-        ? `=== [MÃ NGUỒN C++ CỦA HỌC SINH TẠI CỘT 2] ===\n\`\`\`cpp\n${codeText}\n\`\`\`\n(Hãy rà soát kỹ thuật toán, chỉ ra các dòng bị lỗi cú pháp, logic sai, tràn số, TLE và viết lại mã nguồn C++ Full AC tối ưu 100/100 điểm tại Mục 5)`
+        ? `=== [MÃ NGUỒN C++ CỦA HỌC SINH TẠI CỘT 2] ===\n\`\`\`cpp\n${codeText}\n\`\`\`${staticSignalsBlock}\n(Hãy rà soát kỹ thuật toán, chỉ ra các dòng bị lỗi cú pháp, logic sai, tràn số, TLE và viết lại mã nguồn C++ Full AC tối ưu 100/100 điểm tại Mục 5)`
         : `=== [CỘT 2 CHƯA CÓ CODE HOẶC CHỈ CÓ KHUNG MẪU RỖNG] ===\n(Học sinh chưa hoàn thiện code tại Cột 2. Hãy phân tích các bẫy thuật toán phổ biến, hướng dẫn tư duy giải toán 4 bước chi tiết và xây dựng Mã nguồn C++ Full AC tối ưu 100/100 điểm tại Mục 5)`;
 
-      let problemHeaderContext = "";
-      const codeName = (problemCodeName || "MAXSUB").trim().toUpperCase();
-      problemHeaderContext = `\n📌 THÔNG TIN ĐỊNH DANH BÀI TOÁN & QUY CÁCH TỆP VÀO/RA:\n- Mã bài (Problem Code): ${codeName}\n- Tệp dữ liệu vào (Input File): ${codeName}.INP\n- Tệp dữ liệu ra (Output File): ${codeName}.OUT${selectedQuestionTitle ? `\n- Câu đã chọn trong tài liệu đề: ${selectedQuestionTitle}` : ""}\n`;
+      const problemHeaderContext = `\n📌 THÔNG TIN ĐỊNH DANH BÀI TOÁN & QUY CÁCH TỆP VÀO/RA:\n- Mã bài (Problem Code): ${codeName}\n- Tệp dữ liệu vào (Input File): ${codeName}.INP\n- Tệp dữ liệu ra (Output File): ${codeName}.OUT${selectedQuestionTitle ? `\n- Câu đã chọn trong tài liệu đề: ${selectedQuestionTitle}` : ""}\n`;
 
       // Add prompt text with problem statement & student code
       const promptText = `Sau đây là thông tin đề bài (hoặc tập tài liệu đề thi có thể gồm nhiều câu) và trạng thái mã nguồn C++ tại Cột 2:
@@ -598,9 +627,7 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
       // Dynamic candidate models list for automatic fallback
       let requestedModel = model || "gemini-3.8-flash";
-      if (requestedModel === "gemini-3.1-pro" || requestedModel === "gemini-2.5-pro" || requestedModel === "gemini-pro") {
-        requestedModel = "gemini-3.1-pro-preview";
-      } else if (requestedModel === "gemini-2.5-flash" || requestedModel === "gemini-flash" || requestedModel === "gemini-flash-latest") {
+      if (requestedModel.includes("1.5") || requestedModel.includes("2.0") || requestedModel === "gemini-pro" || requestedModel === "gemini-flash") {
         requestedModel = "gemini-3.8-flash";
       }
 
@@ -608,7 +635,6 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
         new Set([
           requestedModel,
           "gemini-3.8-flash",
-          "gemini-3.1-pro-preview",
           "gemini-3.1-flash-lite",
         ])
       );
@@ -617,14 +643,11 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
       let usedModel = requestedModel;
       let lastError: any = null;
 
-      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
       // Attempt generation with automatic model switching & backoff on 503/429
       for (let pass = 0; pass < 2 && !response; pass++) {
         for (let i = 0; i < candidateModels.length; i++) {
           const candidate = candidateModels[i];
 
-          // Try up to 2 attempts per model with short jitter backoff on 503/429
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
               console.log(
@@ -633,7 +656,7 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
               const modelConfig: any = {
                 systemInstruction,
-                temperature: 0.1, // Very low temperature for maximum arithmetic precision and consistency
+                temperature: 0.1,
               };
 
               const resGen = await ai.models.generateContent({
@@ -680,7 +703,6 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
                 console.warn(`[AI Analysis] Model ${candidate} not found. Skipping to next candidate...`);
                 break;
               } else {
-                // Fatal non-retryable error (e.g. invalid API key)
                 throw candidateErr;
               }
             }
@@ -701,7 +723,7 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
         const rawMsg = lastError?.message || "";
         if (rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || rawMsg.includes("high demand")) {
           return res.status(503).json({
-            error: "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 High Demand). Vui lòng nhấn nút 'Phân tích lại' sau vài giây.",
+            error: "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 High Demand). Vui lòng nhấn nút 'Thử lại ngay' sau vài giây.",
           });
         }
         if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED")) {
@@ -723,7 +745,6 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
       console.error("Lỗi khi phân tích code qua Gemini API:", err);
       let rawMsg = err?.message || "";
 
-      // Try to parse nested JSON error from Google RPC
       if (rawMsg.includes('"message"')) {
         try {
           const jsonMatch = rawMsg.match(/\{[\s\S]*\}/);
@@ -740,11 +761,9 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
       let userFriendlyMessage = rawMsg;
       if (rawMsg.includes("503") || rawMsg.includes("UNAVAILABLE") || rawMsg.includes("high demand") || rawMsg.includes("overloaded")) {
-        userFriendlyMessage = "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 Service Unavailable / High Demand). Hệ thống đã tự động thử các mô hình dự phòng nhưng chưa hoàn tất. Vui lòng bấm 'Phân tích' lại sau 5-10 giây.";
+        userFriendlyMessage = "Hệ thống AI hiện đang có lượng truy cập tăng đột biến tạm thời (503 Service Unavailable / High Demand). Vui lòng bấm 'Phân tích' lại sau 5-10 giây.";
       } else if (rawMsg.includes("429") || rawMsg.includes("RESOURCE_EXHAUSTED") || rawMsg.includes("Quota exceeded")) {
-        userFriendlyMessage = "Hạn mức yêu cầu miễn phí (Free Tier) đã tạm thời chạm giới hạn hoặc đang bị giới hạn tốc độ (Rate limit 429). Vui lòng thử lại sau 30-60 giây, hoặc bấm biểu tượng Cài đặt (bánh răng) ở góc phải để nhập Gemini API Key cá nhân của bạn để tiếp tục không bị gián đoạn.";
-      } else if (rawMsg.includes("API_KEY_INVALID") || rawMsg.includes("API key not valid")) {
-        userFriendlyMessage = "Gemini API Key không hợp lệ. Vui lòng kiểm tra lại khóa API trong phần Cài đặt.";
+        userFriendlyMessage = "Hạn mức yêu cầu tạm thời chạm giới hạn tốc độ (Rate limit 429). Vui lòng thử lại sau 15-30 giây.";
       }
 
       return res.status(500).json({ error: userFriendlyMessage });

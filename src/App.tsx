@@ -69,9 +69,6 @@ int main() {
   });
 
   // Settings states
-  const [userApiKey, setUserApiKey] = useState<string>(() => {
-    return safeGetItem("cp_user_api_key") || "";
-  });
   const [model, setModel] = useState<string>(() => {
     const saved = safeGetItem("cp_selected_model");
     if (!saved || saved.includes("gemini-2.5") || saved.includes("gemini-2.0") || saved.includes("gemini-1.5") || saved.includes("gemini-3.1-pro")) {
@@ -165,11 +162,6 @@ int main() {
     safeSetItem("cp_problem_codename", problemCodeName);
   }, [problemCodeName]);
 
-  const handleSaveApiKey = (key: string) => {
-    setUserApiKey(key);
-    safeSetItem("cp_user_api_key", key);
-  };
-
   const handleSaveModel = (newModel: string) => {
     setModel(newModel);
     safeSetItem("cp_selected_model", newModel);
@@ -198,13 +190,11 @@ int main() {
   };
 
   const handleResetAll = () => {
-    if (window.confirm("Bạn có chắc chắn muốn làm mới toàn bộ đề bài và code?")) {
-      handleClearProblem();
-      handleClearCode();
-      setResult(null);
-      setError(null);
-      safeRemoveItem("cp_last_analysis");
-    }
+    handleClearProblem();
+    handleClearCode();
+    setResult(null);
+    setError(null);
+    safeRemoveItem("cp_last_analysis");
   };
 
   // Load sample problem
@@ -254,7 +244,6 @@ int main() {
           extractedText: f.extractedText,
         })),
         codeText: hasRealCode ? codeText : "",
-        userApiKey,
         model,
         problemCodeName: activeProblem?.problemCode || problemCodeName,
         selectedQuestionTitle: activeProblem
@@ -312,7 +301,6 @@ int main() {
     codeText,
     problemText,
     attachedFiles,
-    userApiKey,
     model,
     problemCodeName,
     detectedProblems,
@@ -341,7 +329,7 @@ int main() {
         onSelectSample={handleSelectSample}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onReset={handleResetAll}
-        hasApiKey={!!userApiKey || hasEnvKey}
+        hasApiKey={hasEnvKey}
         selectedModel={model}
         currentUser={currentUser}
         onLogout={handleLogout}
@@ -393,8 +381,9 @@ int main() {
                 onSelectProblem={(prob) => setSelectedProblemId(prob ? prob.id : null)}
                 matchedProblem={matchedProblem}
                 codeIo={codeIo}
-                userApiKey={userApiKey}
                 model={model}
+                problemCodeName={problemCodeName}
+                onChangeProblemCodeName={setProblemCodeName}
                 onReformulateSuccess={(newText, codeName) => {
                   setProblemText(newText);
                   if (codeName) setProblemCodeName(codeName);
@@ -408,6 +397,7 @@ int main() {
                 codeText={codeText}
                 onChangeCodeText={setCodeText}
                 onClearCode={handleClearCode}
+                problemCodeName={problemCodeName}
               />
             </div>
           </div>
@@ -478,6 +468,8 @@ int main() {
             onOpenSettings={() => setIsSettingsOpen(true)}
             problemCodeName={problemCodeName}
             defaultTab={resultDefaultTab}
+            studentCode={codeText}
+            onApplyAcCode={(ac) => setCodeText(ac)}
           />
         </div>
       </main>
@@ -504,8 +496,6 @@ int main() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        apiKey={userApiKey}
-        onSaveApiKey={handleSaveApiKey}
         model={model}
         onSaveModel={handleSaveModel}
         hasEnvKey={hasEnvKey}

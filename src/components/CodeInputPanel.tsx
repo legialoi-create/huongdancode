@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useMemo } from "react";
 import {
   Code2,
   ClipboardPaste,
@@ -7,22 +7,35 @@ import {
   Sparkles,
   Copy,
   Check,
+  Wand2,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 
 interface CodeInputPanelProps {
   codeText: string;
   onChangeCodeText: (code: string) => void;
   onClearCode: () => void;
+  problemCodeName?: string;
 }
 
 export const CodeInputPanel: React.FC<CodeInputPanelProps> = ({
   codeText,
   onChangeCodeText,
   onClearCode,
+  problemCodeName = "MAXSUB",
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+
+  // Sync line numbers scroll with textarea scroll
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+  };
 
   // Handle Tab key indentation (4 spaces)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -49,7 +62,6 @@ export const CodeInputPanel: React.FC<CodeInputPanelProps> = ({
         onChangeCodeText(text);
       }
     } catch {
-      // Focus textarea so user can press Ctrl+V if permission blocked
       textareaRef.current?.focus();
     }
   };
@@ -76,41 +88,91 @@ export const CodeInputPanel: React.FC<CodeInputPanelProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Load standard CP template
-  const handleInsertTemplate = () => {
-    const template = `#include <iostream>
-#include <vector>
-#include <algorithm>
+  // Smart inject or update freopen & Fast I/O into current code
+  const handleAutoInjectIo = () => {
+    const cleanCodeName = (problemCodeName || "MAXSUB").trim().toUpperCase();
+    const ioSnippet = `    ios_base::sync_with_stdio(false);\n    cin.tie(NULL);\n    freopen("${cleanCodeName}.INP", "r", stdin);\n    freopen("${cleanCodeName}.OUT", "w", stdout);\n`;
+
+    if (!codeText.trim()) {
+      const template = `#include <bits/stdc++.h>
 using namespace std;
 
-void solve() {
+int main() {
+${ioSnippet}
     int n;
-    if (!(cin >> n)) return;
-    
-    // Thuật toán của bạn tại đây
-}
+    if (cin >> n) {
+        // Viết thuật toán của bạn tại đây...
+    }
+    return 0;
+}`;
+      onChangeCodeText(template);
+      return;
+    }
+
+    // If main() exists and doesn't have freopen yet, inject right after main() {
+    const mainMatch = codeText.match(/(int|signed)\s+main\s*\([^)]*\)\s*\{/);
+    if (mainMatch && mainMatch.index !== undefined) {
+      const insertPos = mainMatch.index + mainMatch[0].length;
+      let updated = codeText;
+      if (!/freopen\s*\(/i.test(codeText)) {
+        updated =
+          codeText.slice(0, insertPos) +
+          "\n" +
+          ioSnippet +
+          codeText.slice(insertPos);
+      } else {
+        // Update existing freopen filenames to match problemCodeName
+        updated = codeText
+          .replace(/freopen\s*\(\s*"[^"]*"\s*,\s*"r"\s*,\s*stdin\s*\)\s*;/i, `freopen("${cleanCodeName}.INP", "r", stdin);`)
+          .replace(/freopen\s*\(\s*"[^"]*"\s*,\s*"w"\s*,\s*stdout\s*\)\s*;/i, `freopen("${cleanCodeName}.OUT", "w", stdout);`);
+      }
+      onChangeCodeText(updated);
+    } else {
+      handleInsertTemplate();
+    }
+  };
+
+  // Load standard CP template
+  const handleInsertTemplate = () => {
+    const cleanCodeName = (problemCodeName || "MAXSUB").trim().toUpperCase();
+    const template = `#include <bits/stdc++.h>
+using namespace std;
 
 int main() {
-    // Tối ưu nhập xuất C++
     ios_base::sync_with_stdio(false);
     cin.tie(NULL);
+    freopen("${cleanCodeName}.INP", "r", stdin);
+    freopen("${cleanCodeName}.OUT", "w", stdout);
 
-    int t = 1;
-    // cin >> t; // Bỏ comment nếu bài có nhiều test cases
-    while (t--) {
-        solve();
+    long long n;
+    if (cin >> n) {
+        // Viết thuật toán tối ưu tại đây...
     }
     return 0;
 }`;
     onChangeCodeText(template);
   };
 
+  // Real-time static C++ diagnostics
+  const diagnostics = useMemo(() => {
+    const cleanCodeName = (problemCodeName || "MAXSUB").trim().toUpperCase();
+    const hasFreopen = /freopen\s*\(/i.test(codeText);
+    const hasFastIo = /sync_with_stdio/i.test(codeText) && /cin\.tie/i.test(codeText);
+    const hasLongLong = /\blong\s+long\b/.test(codeText);
+    return {
+      cleanCodeName,
+      hasFreopen,
+      hasFastIo,
+      hasLongLong,
+    };
+  }, [codeText, problemCodeName]);
+
   const lineCount = codeText ? codeText.split("\n").length : 0;
 
   return (
     <div className="flex flex-col h-full bg-slate-900/70 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
       {/* Panel Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800">
+      <div className="flex flex-wrap items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 gap-2">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
             <Code2 className="w-3.5 h-3.5" />
@@ -118,8 +180,8 @@ int main() {
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <span>2. Code C++ của học sinh</span>
-              <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-                Thiếu hoặc có lỗi AI vẫn phân tích đầy đủ
+              <span className="text-[11px] font-normal text-slate-400 hidden xl:inline">
+                · Tự động rà lỗi & tối ưu
               </span>
             </h2>
           </div>
@@ -129,12 +191,22 @@ int main() {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
+            onClick={handleAutoInjectIo}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-200 bg-indigo-950/70 hover:bg-indigo-900/80 border border-indigo-500/30 transition-all cursor-pointer shadow-sm active:scale-95"
+            title={`Tự động gắn freopen("${diagnostics.cleanCodeName}.INP/.OUT") và Fast I/O vào code`}
+          >
+            <Wand2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Gắn {diagnostics.cleanCodeName}.INP</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handlePasteFromClipboard}
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
             title="Dán nhanh mã nguồn từ bộ nhớ tạm"
           >
             <ClipboardPaste className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="hidden sm:inline">Dán nhanh</span>
+            <span className="hidden sm:inline">Dán</span>
           </button>
 
           <input
@@ -152,7 +224,7 @@ int main() {
             title="Tải file .cpp từ máy tính"
           >
             <Upload className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="hidden sm:inline">Tải file .cpp</span>
+            <span className="hidden sm:inline">Nạp .cpp</span>
           </button>
 
           {codeText && (
@@ -160,7 +232,7 @@ int main() {
               <button
                 type="button"
                 onClick={handleCopy}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Sao chép code hiện tại"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -169,7 +241,7 @@ int main() {
               <button
                 type="button"
                 onClick={onClearCode}
-                className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors"
+                className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Xóa toàn bộ code"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -182,9 +254,12 @@ int main() {
       {/* Editor Body */}
       <div className="flex-1 flex flex-col p-4 space-y-2 min-h-[360px]">
         <div className="flex-1 flex relative rounded-xl border border-slate-800 bg-slate-950/90 overflow-hidden focus-within:border-indigo-500/80 focus-within:ring-1 focus-within:ring-indigo-500/30">
-          {/* Line Numbers Bar */}
-          <div className="w-10 py-3.5 bg-slate-950/70 border-r border-slate-800/60 select-none text-right pr-2 text-slate-600 font-mono text-xs overflow-hidden leading-relaxed">
-            {Array.from({ length: Math.max(lineCount, 16) }).map((_, i) => (
+          {/* Synchronized Line Numbers Bar */}
+          <div
+            ref={lineNumbersRef}
+            className="w-10 py-3.5 bg-slate-950/70 border-r border-slate-800/60 select-none text-right pr-2 text-slate-600 font-mono text-xs sm:text-sm overflow-hidden leading-relaxed"
+          >
+            {Array.from({ length: Math.max(lineCount, 18) }).map((_, i) => (
               <div key={i}>{i + 1}</div>
             ))}
           </div>
@@ -195,32 +270,51 @@ int main() {
             value={codeText}
             onChange={(e) => onChangeCodeText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onScroll={handleScroll}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
             placeholder={`// Dán mã nguồn C++ của học sinh tại đây (nếu có)...
 // (LƯU Ý: Dù Cột 2 thiếu code, để trống hoặc code có lỗi cú pháp/logic, AI VẪN LUÔN PHÂN TÍCH ĐẦY ĐỦ THEO CÁC BƯỚC: Phân tích đề -> Chỉ ra bẫy & lỗi -> Hướng dẫn thuật toán từng bước -> Mã nguồn Full AC 100%)`}
-            className="flex-1 p-3.5 bg-transparent text-slate-100 placeholder:text-slate-700 font-mono text-xs sm:text-sm leading-relaxed resize-none focus:outline-none whitespace-pre overflow-x-auto"
+            className="flex-1 p-3.5 bg-transparent text-slate-100 placeholder:text-slate-600 font-mono text-xs sm:text-sm leading-relaxed resize-none focus:outline-none whitespace-pre overflow-auto"
           />
         </div>
 
-        {/* Editor Footer Status */}
-        <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
-          <div className="flex items-center gap-3">
-            <span>{lineCount} dòng</span>
-            <span>{codeText.length} ký tự</span>
-            <span className="text-slate-400 font-mono">C++17 / C++20</span>
+        {/* Editor Footer Status & Real-time Static Hints */}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 px-1">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="font-mono">{lineCount} dòng</span>
+            <span aria-hidden="true">·</span>
+            <span className="flex items-center gap-1">
+              {diagnostics.hasFreopen ? (
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              ) : (
+                <AlertCircle className="w-3 h-3 text-amber-400" />
+              )}
+              <span>{diagnostics.hasFreopen ? "Đã có freopen" : "Chưa có freopen"}</span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="flex items-center gap-1">
+              {diagnostics.hasFastIo ? (
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              ) : (
+                <AlertCircle className="w-3 h-3 text-slate-500" />
+              )}
+              <span>{diagnostics.hasFastIo ? "Fast I/O" : "Standard I/O"}</span>
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono text-indigo-300">
+              {diagnostics.hasLongLong ? "long long (64-bit)" : "int (32-bit)"}
+            </span>
           </div>
 
-          {!codeText && (
-            <button
-              type="button"
-              onClick={handleInsertTemplate}
-              className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 cursor-pointer"
-            >
-              <Sparkles className="w-3 h-3" /> Chèn template CP chuẩn
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleInsertTemplate}
+            className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 cursor-pointer"
+          >
+            <Sparkles className="w-3 h-3" /> Mẫu chuẩn HSG
+          </button>
         </div>
       </div>
     </div>
