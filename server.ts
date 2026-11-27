@@ -5,6 +5,12 @@ import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
 import JSZip from "jszip";
+import {
+  initModelAutoUpdater,
+  getModelRegistryState,
+  refreshGeminiModels,
+  getCandidateModels,
+} from "./modelRegistry.ts";
 
 function unescapeXml(text: string): string {
   return text
@@ -163,12 +169,42 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+  // Initialize 5-day automatic Gemini model discovery & updater
+  initModelAutoUpdater();
+
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
+    const registry = getModelRegistryState();
     res.json({
       status: "ok",
       hasEnvKey: !!process.env.GEMINI_API_KEY,
+      primaryModel: registry.primaryModel,
+      fallbackModels: registry.fallbackModels,
     });
+  });
+
+  // Auto-discovered models status endpoint
+  app.get("/api/models", (_req, res) => {
+    res.json({
+      success: true,
+      ...getModelRegistryState(),
+    });
+  });
+
+  // Trigger manual model discovery scan immediately
+  app.post("/api/models/refresh", async (_req, res) => {
+    try {
+      const updated = await refreshGeminiModels(true);
+      res.json({
+        success: true,
+        ...updated,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err?.message || "Không thể quét danh sách mô hình mới.",
+      });
+    }
   });
 
   // Dedicated Word/Document Text Extraction endpoint
@@ -210,7 +246,7 @@ async function startServer() {
       const {
         problemText = "",
         problemFiles = [],
-        model = "gemini-4-hydrogen",
+        model = "auto",
       } = req.body || {};
 
       const hasProblemText = problemText && typeof problemText === "string" && problemText.trim().length > 0;
@@ -306,33 +342,37 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
 
       parts.push({ text: promptText });
 
-      const allowedModels = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]);
-      const requestedModel = allowedModels.has(model) ? model : "gemini-4-hydrogen";
-
-      // Problem reformulation fallback chain: Gemini 4 Hydrogen -> Gemini 3.1 Flash Lite -> Gemini 3.1 Pro Preview
-      const candidateModels = Array.from(
-        new Set([
-          requestedModel,
-          "gemini-4-hydrogen",
-          "gemini-3.1-flash-lite",
-          "gemini-3.1-pro-preview",
-        ])
-      );
+      // Dynamically resolved candidate chain from 5-day auto-updater
+      const candidateModels = getCandidateModels(model);
 
       let response: any = null;
-      let usedModel = "gemini-4-hydrogen";
+      let usedModel = candidateModels[0] || "gemini-4-hydrogen";
 
       for (const candidate of candidateModels) {
         try {
           console.log(`[AI Problem Reformulation] Requesting from ${candidate}...`);
-          const resGen = await ai.models.generateContent({
-            model: candidate,
-            contents: { parts },
-            config: {
-              systemInstruction,
-              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            },
-          });
+          let resGen: any;
+          try {
+            resGen = await ai.models.generateContent({
+              model: candidate,
+              contents: { parts },
+              config: {
+                systemInstruction,
+                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+              },
+            });
+          } catch (cfgErr: any) {
+            const msg = String(cfgErr?.message || "");
+            if (msg.includes("400") && msg.toLowerCase().includes("thinking")) {
+              resGen = await ai.models.generateContent({
+                model: candidate,
+                contents: { parts },
+                config: { systemInstruction },
+              });
+            } else {
+              throw cfgErr;
+            }
+          }
 
           if (resGen && resGen.text) {
             response = resGen;
@@ -385,7 +425,7 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
         problemText,
         problemFiles,
         codeText,
-        model = "gemini-4-hydrogen",
+        model = "auto",
         thinkingLevel = "HIGH",
         testCases,
         problemCodeName,
@@ -615,21 +655,11 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
       parts.push({ text: promptText });
 
-      // Dynamic candidate models list with 3.1 fallback chain behind Gemini 4 Hydrogen
-      const allowedModels = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]);
-      const requestedModel = allowedModels.has(model) ? model : "gemini-4-hydrogen";
-
-      const candidateModels = Array.from(
-        new Set([
-          requestedModel,
-          "gemini-4-hydrogen",
-          "gemini-3.1-flash-lite",
-          "gemini-3.1-pro-preview",
-        ])
-      );
+      // Dynamically resolved candidate models list from 5-day auto-updater
+      const candidateModels = getCandidateModels(model);
 
       let response: any = null;
-      let usedModel = requestedModel;
+      let usedModel = candidateModels[0] || "gemini-4-hydrogen";
       let lastError: any = null;
 
       // Attempt generation with automatic model switching & backoff on 503/429
@@ -643,24 +673,39 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
                 `[AI Analysis] Pass ${pass + 1}, Requesting from ${candidate} (attempt ${attempt + 1})...`
               );
 
-              let resolvedThinkingLevel = ThinkingLevel.MEDIUM;
-              if (candidate === "gemini-4-hydrogen") {
-                resolvedThinkingLevel =
-                  thinkingLevel === "XHIGH" ? ThinkingLevel.XHIGH : ThinkingLevel.HIGH;
-              } else if (candidate === "gemini-3.1-pro-preview") {
-                resolvedThinkingLevel = ThinkingLevel.HIGH;
+              let resolvedThinkingLevel = ThinkingLevel.HIGH;
+              if (candidate.toLowerCase().includes("lite")) {
+                resolvedThinkingLevel = ThinkingLevel.MEDIUM;
+              } else if (
+                thinkingLevel === "XHIGH" &&
+                (candidate === "gemini-4-hydrogen" || /^gemini-[5-9]/i.test(candidate))
+              ) {
+                resolvedThinkingLevel = ThinkingLevel.XHIGH;
               }
 
-              const modelConfig: any = {
-                systemInstruction,
-                thinkingConfig: { thinkingLevel: resolvedThinkingLevel },
-              };
-
-              const resGen = await ai.models.generateContent({
-                model: candidate,
-                contents: { parts },
-                config: modelConfig,
-              });
+              let resGen: any;
+              try {
+                resGen = await ai.models.generateContent({
+                  model: candidate,
+                  contents: { parts },
+                  config: {
+                    systemInstruction,
+                    thinkingConfig: { thinkingLevel: resolvedThinkingLevel },
+                  },
+                });
+              } catch (cfgErr: any) {
+                const msg = String(cfgErr?.message || "");
+                // Future-proof fallback if a newly released model doesn't support a specific thinkingLevel
+                if (msg.includes("400") && msg.toLowerCase().includes("thinking")) {
+                  resGen = await ai.models.generateContent({
+                    model: candidate,
+                    contents: { parts },
+                    config: { systemInstruction },
+                  });
+                } else {
+                  throw cfgErr;
+                }
+              }
 
               if (resGen && resGen.text) {
                 response = resGen;
@@ -684,6 +729,9 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
                 errStr.includes("404") ||
                 errStr.includes("not found") ||
                 errStr.includes("no longer available");
+              const isPermissionDenied =
+                errStr.includes("403") ||
+                errStr.includes("PERMISSION_DENIED");
 
               if (isQuotaExceeded) {
                 console.warn(
@@ -696,8 +744,8 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
                   `[AI Analysis] Model ${candidate} transient 503 spike on attempt ${attempt + 1}. Backing off ${Math.round(backoff)}ms...`
                 );
                 await sleep(backoff);
-              } else if (isNotFound) {
-                console.warn(`[AI Analysis] Model ${candidate} not found. Skipping to next candidate...`);
+              } else if (isNotFound || isPermissionDenied) {
+                console.warn(`[AI Analysis] Model ${candidate} unavailable (${isNotFound ? 404 : 403}). Skipping to next candidate...`);
                 break;
               } else {
                 throw candidateErr;

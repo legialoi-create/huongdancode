@@ -21,9 +21,21 @@ interface HeaderProps {
   onReset: () => void;
   hasApiKey: boolean;
   selectedModel: string;
+  effectiveModel?: string;
   currentUser?: string | null;
   onLogout?: () => void;
   onLoginSuccess?: (username: string) => void;
+}
+
+function formatShortModelLabel(modelId: string): string {
+  const cleaned = modelId
+    .replace(/^gemini-/i, "")
+    .replace(/-preview$/i, "")
+    .replace(/-flash-lite$/i, " Lite");
+  return cleaned
+    .split("-")
+    .map((p) => (/^\d/.test(p) ? p : p.charAt(0).toUpperCase() + p.slice(1)))
+    .join(" ");
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   onReset,
   hasApiKey,
   selectedModel,
+  effectiveModel,
   currentUser,
   onLogout,
   onLoginSuccess,
@@ -238,12 +251,13 @@ export const Header: React.FC<HeaderProps> = ({
                 ? "bg-slate-900 border-slate-700 text-slate-200 hover:border-indigo-500 hover:bg-slate-850"
                 : "bg-amber-950/30 border-amber-700/60 text-amber-300 hover:bg-amber-900/40"
             }`}
-            title={`Cài đặt Model AI (Đang dùng: ${selectedModel})`}
+            title={`Cài đặt Model AI (${selectedModel === "auto" ? `Tự động: ${effectiveModel || "gemini-4-hydrogen"}` : selectedModel})`}
           >
             <Settings className="w-3.5 h-3.5 text-indigo-400" />
             <span className="hidden md:inline">Cài đặt AI</span>
             <span className="hidden sm:inline text-[10px] font-mono text-indigo-300 bg-indigo-950/70 border border-indigo-500/30 px-1.5 py-0.5 rounded-md">
-              {selectedModel === "gemini-3.1-flash-lite" ? "3.1 Lite" : "4 Hydrogen"}
+              {selectedModel === "auto" ? "Auto · " : ""}
+              {formatShortModelLabel(effectiveModel || selectedModel)}
             </span>
             {hasApiKey ? (
               <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-400/20" title="AI sẵn sàng" />

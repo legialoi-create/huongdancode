@@ -9,7 +9,7 @@ import { Header } from "./components/Header";
 import { ProblemInputPanel } from "./components/ProblemInputPanel";
 import { CodeInputPanel } from "./components/CodeInputPanel";
 import { ResultPanel } from "./components/ResultPanel";
-import { SettingsModal, ThinkingMode } from "./components/SettingsModal";
+import { SettingsModal, ThinkingMode, ModelRegistryInfo } from "./components/SettingsModal";
 import { LoginModal } from "./components/LoginModal";
 import { AttachedFile, ParsedAnalysis } from "./types";
 import { SAMPLE_PROBLEMS } from "./data/sampleProblems";
@@ -68,18 +68,27 @@ int main() {
     return safeGetItem("cp_problem_codename") || "MAXSUB";
   });
 
-  // Settings states
+  // Settings states — default to "auto" so the 5-day auto-updater always picks the newest usable Gemini version
   const [model, setModel] = useState<string>(() => {
-    const saved = safeGetItem("cp_selected_model");
-    if (saved === "gemini-4-hydrogen" || saved === "gemini-3.1-flash-lite") {
-      return saved;
-    }
-    safeSetItem("cp_selected_model", "gemini-4-hydrogen");
-    return "gemini-4-hydrogen";
+    const saved = safeGetItem("cp_selected_model_v2");
+    return saved || "auto";
   });
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingMode>(() => {
     const saved = safeGetItem("cp_thinking_level");
     return saved === "XHIGH" ? "XHIGH" : "HIGH";
+  });
+  const [modelRegistry, setModelRegistry] = useState<ModelRegistryInfo>({
+    primaryModel: "gemini-4-hydrogen",
+    fallbackModels: ["gemini-3.1-flash-lite", "gemini-3.1-pro-preview"],
+    availableModels: [
+      { id: "gemini-4-hydrogen", displayName: "Gemini 4 Hydrogen", tier: "primary", verified: true },
+      { id: "gemini-3.1-flash-lite", displayName: "Gemini 3.1 Flash Lite", tier: "lite", verified: true },
+      { id: "gemini-3.1-pro-preview", displayName: "Gemini 3.1 Pro Preview", tier: "pro", verified: true },
+    ],
+    lastCheckedAt: 0,
+    nextCheckAt: Date.now() + 5 * 24 * 60 * 60 * 1000,
+    intervalDays: 5,
+    source: "default",
   });
   const [hasEnvKey, setHasEnvKey] = useState<boolean>(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -104,7 +113,7 @@ int main() {
 
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // Check server health and env key presence on initial load
+  // Check server health & load 5-day auto-discovered model registry on initial load
   useEffect(() => {
     fetch("/api/health")
       .then((res) => res.json())
@@ -115,6 +124,26 @@ int main() {
       })
       .catch(() => {
         // Dev server fallback
+      });
+
+    fetch("/api/models")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.primaryModel) {
+          setModelRegistry({
+            primaryModel: data.primaryModel,
+            fallbackModels: data.fallbackModels || [],
+            availableModels: data.availableModels || [],
+            lastCheckedAt: data.lastCheckedAt || 0,
+            nextCheckAt: data.nextCheckAt || Date.now() + 5 * 24 * 60 * 60 * 1000,
+            intervalDays: data.intervalDays || 5,
+            lastError: data.lastError || null,
+            source: data.source || "cache",
+          });
+        }
+      })
+      .catch(() => {
+        // Ignore transient network errors
       });
   }, []);
 
@@ -168,7 +197,7 @@ int main() {
 
   const handleSaveModel = (newModel: string) => {
     setModel(newModel);
-    safeSetItem("cp_selected_model", newModel);
+    safeSetItem("cp_selected_model_v2", newModel);
   };
 
   const handleSaveThinkingLevel = (newLevel: ThinkingMode) => {
@@ -342,6 +371,7 @@ int main() {
         onReset={handleResetAll}
         hasApiKey={hasEnvKey}
         selectedModel={model}
+        effectiveModel={model === "auto" ? modelRegistry.primaryModel : model}
         currentUser={currentUser}
         onLogout={handleLogout}
         onLoginSuccess={handleLoginSuccess}
@@ -492,9 +522,14 @@ int main() {
             Trợ lý Phân tích Thuật toán & Tối ưu Lập trình C++ — Hướng dẫn tư duy giải toán, bắt lỗi TLE/Tràn số và cung cấp mã nguồn Full AC.
           </p>
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Mô hình: <strong className="text-indigo-400">{model}</strong></span>
+            <span>
+              Mô hình:{" "}
+              <strong className="text-indigo-400">
+                {model === "auto" ? `Auto (${modelRegistry.primaryModel})` : model}
+              </strong>
+            </span>
             <span>•</span>
-            <span>Tối ưu Fast I/O</span>
+            <span>Tự cập nhật 5 ngày/lần</span>
             <span>•</span>
             <span>Bắt lỗi Overflow & TLE</span>
             <span>•</span>
@@ -512,6 +547,8 @@ int main() {
         thinkingLevel={thinkingLevel}
         onSaveThinkingLevel={handleSaveThinkingLevel}
         hasEnvKey={hasEnvKey}
+        registry={modelRegistry}
+        onRegistryUpdated={setModelRegistry}
       />
 
       {/* Login Modal */}

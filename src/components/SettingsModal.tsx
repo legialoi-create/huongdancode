@@ -1,7 +1,37 @@
 import React, { useState, useEffect } from "react";
-import { ShieldCheck, X, Cpu, Check, AlertCircle, RefreshCw, Zap, Sparkles, Brain } from "lucide-react";
+import {
+  ShieldCheck,
+  X,
+  Cpu,
+  Check,
+  AlertCircle,
+  RefreshCw,
+  Zap,
+  Sparkles,
+  Brain,
+  Clock,
+  Radar,
+} from "lucide-react";
 
 export type ThinkingMode = "HIGH" | "XHIGH";
+
+export interface DiscoveredModelInfo {
+  id: string;
+  displayName: string;
+  tier: "primary" | "pro" | "lite";
+  verified: boolean;
+}
+
+export interface ModelRegistryInfo {
+  primaryModel: string;
+  fallbackModels: string[];
+  availableModels: DiscoveredModelInfo[];
+  lastCheckedAt: number;
+  nextCheckAt: number;
+  intervalDays: number;
+  lastError?: string | null;
+  source?: string;
+}
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -11,6 +41,23 @@ interface SettingsModalProps {
   thinkingLevel: ThinkingMode;
   onSaveThinkingLevel: (level: ThinkingMode) => void;
   hasEnvKey: boolean;
+  registry: ModelRegistryInfo;
+  onRegistryUpdated: (next: ModelRegistryInfo) => void;
+}
+
+function formatViDateTime(ts: number): string {
+  if (!ts || ts <= 0) return "Đang khởi tạo...";
+  try {
+    return new Date(ts).toLocaleString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -21,17 +68,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   thinkingLevel,
   onSaveThinkingLevel,
   hasEnvKey,
+  registry,
+  onRegistryUpdated,
 }) => {
   const [selectedModel, setSelectedModel] = useState(model);
   const [selectedThinking, setSelectedThinking] = useState<ThinkingMode>(thinkingLevel);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setSelectedModel(model);
       setSelectedThinking(thinkingLevel);
-      setTestResult(null);
+      setScanResult(null);
     }
   }, [isOpen, model, thinkingLevel]);
 
@@ -43,52 +92,65 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose();
   };
 
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
+  const handleScanNow = async () => {
+    setScanning(true);
+    setScanResult(null);
 
     try {
-      const res = await fetch("/api/health");
+      const res = await fetch("/api/models/refresh", { method: "POST" });
       const data = await res.json();
 
-      if (data.status === "ok" && data.hasEnvKey) {
-        setTestResult({
+      if (res.ok && data.success && data.primaryModel) {
+        onRegistryUpdated({
+          primaryModel: data.primaryModel,
+          fallbackModels: data.fallbackModels || [],
+          availableModels: data.availableModels || [],
+          lastCheckedAt: data.lastCheckedAt || Date.now(),
+          nextCheckAt: data.nextCheckAt || Date.now() + 5 * 24 * 60 * 60 * 1000,
+          intervalDays: data.intervalDays || 5,
+          lastError: data.lastError || null,
+          source: data.source || "live-discovery",
+        });
+        setScanResult({
           success: true,
-          message: "Kết nối máy chủ AI thành công! Hệ thống sẵn sàng chạy Gemini 4 Hydrogen & Gemini 3.1 Flash Lite.",
+          message: `Đã quét xong từ Google Gemini API! Bản mới nhất khả dụng: ${data.primaryModel}. Chu kỳ tự động kiểm tra tiếp theo sau ${data.intervalDays || 5} ngày.`,
         });
       } else {
-        setTestResult({
+        setScanResult({
           success: false,
-          message: "Máy chủ chưa nhận diện được cấu hình môi trường AI.",
+          message: data.error || "Không thể quét danh sách mô hình mới lúc này.",
         });
       }
     } catch {
-      setTestResult({
+      setScanResult({
         success: false,
-        message: "Không thể kết nối tới máy chủ AI. Vui lòng thử lại sau.",
+        message: "Không thể kết nối tới máy chủ để quét mô hình AI.",
       });
     } finally {
-      setTesting(false);
+      setScanning(false);
     }
   };
 
+  const activeResolvedModel = selectedModel === "auto" ? registry.primaryModel : selectedModel;
+  const fullChain = Array.from(new Set([registry.primaryModel, ...(registry.fallbackModels || [])]));
+  const supportsXHigh =
+    activeResolvedModel === "gemini-4-hydrogen" || /^gemini-[5-9]/i.test(activeResolvedModel);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div
-        className="fixed inset-0"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div className="relative z-10 w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 w-full max-w-xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/60">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/60 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
               <Cpu className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Cấu hình Mô hình AI Mới Nhất</h2>
-              <p className="text-xs text-slate-400">Động cơ Gemini 4 miễn phí tốt nhất cho phân tích thuật toán C++</p>
+              <h2 className="text-base font-bold text-white">Cấu hình AI Tự Động Cập Nhật</h2>
+              <p className="text-xs text-slate-400">
+                Tự dò phiên bản Gemini mới nhất mỗi {registry.intervalDays || 5} ngày không cần sửa code
+              </p>
             </div>
           </div>
           <button
@@ -100,18 +162,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-5 text-sm">
-          {/* Status Alert */}
+        <div className="p-6 space-y-4 text-sm overflow-y-auto">
+          {/* Auto-Updater Status Panel */}
           {hasEnvKey ? (
-            <div className="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs">
-              <ShieldCheck className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
-              <div className="space-y-1">
-                <div>
-                  <span className="font-semibold text-emerald-200">Hệ thống AI trực tuyến (Miễn phí):</span> Mô hình chính là <strong className="text-white">Gemini 4 Hydrogen</strong>.
+            <div className="p-3.5 rounded-xl bg-emerald-950/35 border border-emerald-800/60 text-emerald-200 text-xs space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
+                  <div className="space-y-1">
+                    <div>
+                      <span className="font-semibold text-emerald-100">Động cơ Tự Cập Nhật (Chu kỳ {registry.intervalDays || 5} ngày):</span>{" "}
+                      Bản mới nhất đang dùng là{" "}
+                      <span className="font-mono font-bold text-white">{registry.primaryModel}</span>
+                    </div>
+                    <div className="text-[11px] text-emerald-300/85">
+                      Chuỗi dự phòng tự động:{" "}
+                      {fullChain.map((id, idx) => (
+                        <React.Fragment key={id}>
+                          <span className="font-mono text-white">{id}</span>
+                          {idx < fullChain.length - 1 && <span className="mx-1 text-emerald-400">→</span>}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-[11px] text-emerald-300/85">
-                  Chuỗi dự phòng tự động: <span className="font-mono text-white">gemini-4-hydrogen</span> → <span className="font-mono text-white">gemini-3.1-flash-lite</span> → <span className="font-mono text-white">gemini-3.1-pro-preview</span>
-                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-800/40 text-[11px] text-emerald-300/80">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                  Quét gần nhất: <strong className="text-emerald-100">{formatViDateTime(registry.lastCheckedAt)}</strong>
+                </span>
+                <span>
+                  Quét kế tiếp: <strong className="text-emerald-100">{formatViDateTime(registry.nextCheckAt)}</strong>
+                </span>
               </div>
             </div>
           ) : (
@@ -123,72 +206,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* Model Selection */}
+          {/* Auto Mode Selection (Primary Recommended) */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                Chọn Mô hình AI Khả dụng
+                Chế độ chọn Mô hình AI
               </label>
               <span className="text-xs text-indigo-300 font-mono">
-                {selectedModel}
+                {selectedModel === "auto" ? `auto (${registry.primaryModel})` : selectedModel}
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Option 1: Gemini 4 Hydrogen (Latest Free Gemini 4) */}
-              <button
-                type="button"
-                onClick={() => setSelectedModel("gemini-4-hydrogen")}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  selectedModel === "gemini-4-hydrogen"
-                    ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
-                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-xs text-indigo-300 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Gemini 4 Hydrogen
-                  </span>
-                  {selectedModel === "gemini-4-hydrogen" && <Check className="w-4 h-4 text-indigo-400" />}
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Mới nhất (Khuyên dùng): Thế hệ Gemini 4 mạnh mẽ nhất không tốn phí API, hỗ trợ suy luận sâu tối ưu thuật toán C++ Full AC & OCR đề chuẩn LaTeX.
-                </p>
-              </button>
+            <button
+              type="button"
+              onClick={() => setSelectedModel("auto")}
+              className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                selectedModel === "auto"
+                  ? "bg-indigo-600/20 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
+                  : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-xs text-indigo-200 flex items-center gap-1.5">
+                  <Radar className="w-4 h-4 text-indigo-400" />
+                  Tự động chọn phiên bản Gemini mới nhất (Khuyên dùng)
+                </span>
+                {selectedModel === "auto" && <Check className="w-4 h-4 text-indigo-400" />}
+              </div>
+              <p className="text-xs text-slate-300/90 leading-relaxed">
+                Hệ thống tự động gọi Google API mỗi <strong>{registry.intervalDays || 5} ngày</strong> để phát hiện các thế hệ Gemini mới nhất miễn phí (4.x, 5.x...), kiểm tra khả năng hoạt động thực tế và tự nâng cấp ngay mà không cần viết lại code.
+              </p>
+            </button>
 
-              {/* Option 2: Gemini 3.1 Flash Lite */}
-              <button
-                type="button"
-                onClick={() => setSelectedModel("gemini-3.1-flash-lite")}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  selectedModel === "gemini-3.1-flash-lite"
-                    ? "bg-emerald-600/15 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40"
-                    : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-xs text-emerald-300 flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5" />
-                    Gemini 3.1 Flash Lite
-                  </span>
-                  {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-4 h-4 text-emerald-400" />}
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Siêu tốc độ: Độ trễ cực thấp, phản hồi tức thì cho các bài cơ bản, soát nhanh lỗi cú pháp, tràn số và file I/O.
-                </p>
-              </button>
+            {/* Manual Override List from Live Discovered Models */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              {(registry.availableModels || []).map((item) => {
+                const isSelected = selectedModel === item.id;
+                const isLite = item.tier === "lite";
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedModel(item.id)}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      isSelected
+                        ? isLite
+                          ? "bg-emerald-600/15 border-emerald-500 text-white ring-1 ring-emerald-500/40"
+                          : "bg-indigo-600/15 border-indigo-500 text-white ring-1 ring-indigo-500/40"
+                        : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span
+                        className={`font-bold text-xs flex items-center gap-1.5 ${
+                          isLite ? "text-emerald-300" : "text-indigo-300"
+                        }`}
+                      >
+                        {isLite ? <Zap className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {item.displayName}
+                      </span>
+                      {isSelected && (
+                        <Check
+                          className={`w-4 h-4 ${isLite ? "text-emerald-400" : "text-indigo-400"}`}
+                        />
+                      )}
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-400 truncate">{item.id}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Thinking Depth Selector for Gemini 4 Hydrogen */}
-          {selectedModel === "gemini-4-hydrogen" && (
+          {/* Thinking Depth Selector */}
+          {supportsXHigh && (
             <div className="space-y-2 p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                   <Brain className="w-3.5 h-3.5 text-violet-400" />
-                  Độ sâu suy luận (Gemini 4 Hydrogen)
+                  Độ sâu suy luận ({activeResolvedModel})
                 </span>
                 <span className="text-[11px] font-mono text-violet-300">{selectedThinking}</span>
               </div>
@@ -221,40 +318,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* Note about paid API models */}
-          <p className="text-[11px] text-slate-400 leading-relaxed px-1">
-            Lưu ý: Các mô hình trả phí API riêng như <span className="text-slate-300 font-mono">gemini-4-neon</span>, <span className="text-slate-300 font-mono">gemini-4-carbon</span>, <span className="text-slate-300 font-mono">gemini-4-argon</span> không nằm trong hạn mức API miễn phí (gói Gemini Pro cá nhân không áp dụng cho API trả phí), nên ứng dụng đã tự động tối ưu bằng <strong className="text-indigo-300">Gemini 4 Hydrogen (HIGH/XHIGH)</strong> dùng ổn định ngay lập tức.
-          </p>
-
-          {/* Test status */}
-          {testResult && (
+          {/* Scan status */}
+          {scanResult && (
             <div
               className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
-                testResult.success
+                scanResult.success
                   ? "bg-emerald-950/40 border border-emerald-800/60 text-emerald-300"
                   : "bg-rose-950/40 border border-rose-800/60 text-rose-300"
               }`}
             >
-              {testResult.success ? (
+              {scanResult.success ? (
                 <Check className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
               ) : (
                 <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
               )}
-              <span>{testResult.message}</span>
+              <span>{scanResult.message}</span>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900/80 border-t border-slate-800">
+        <div className="flex items-center justify-between px-6 py-4 bg-slate-900/80 border-t border-slate-800 shrink-0">
           <button
             type="button"
-            onClick={handleTestConnection}
-            disabled={testing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            onClick={handleScanNow}
+            disabled={scanning}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-indigo-300 hover:text-white bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-500/30 transition-colors cursor-pointer disabled:opacity-60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${testing ? "animate-spin" : ""}`} />
-            <span>Kiểm tra máy chủ</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${scanning ? "animate-spin" : ""}`} />
+            <span>{scanning ? "Đang dò bản mới..." : "Quét bản mới ngay"}</span>
           </button>
           <div className="flex items-center gap-2">
             <button
