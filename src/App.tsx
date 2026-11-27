@@ -9,7 +9,7 @@ import { Header } from "./components/Header";
 import { ProblemInputPanel } from "./components/ProblemInputPanel";
 import { CodeInputPanel } from "./components/CodeInputPanel";
 import { ResultPanel } from "./components/ResultPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, ThinkingMode } from "./components/SettingsModal";
 import { LoginModal } from "./components/LoginModal";
 import { AttachedFile, ParsedAnalysis } from "./types";
 import { SAMPLE_PROBLEMS } from "./data/sampleProblems";
@@ -71,11 +71,15 @@ int main() {
   // Settings states
   const [model, setModel] = useState<string>(() => {
     const saved = safeGetItem("cp_selected_model");
-    if (!saved || saved.includes("gemini-2.5") || saved.includes("gemini-2.0") || saved.includes("gemini-1.5") || saved.includes("gemini-3.1-pro")) {
-      safeSetItem("cp_selected_model", "gemini-3.8-flash");
-      return "gemini-3.8-flash";
+    if (saved === "gemini-4-hydrogen" || saved === "gemini-3.1-flash-lite") {
+      return saved;
     }
-    return saved;
+    safeSetItem("cp_selected_model", "gemini-4-hydrogen");
+    return "gemini-4-hydrogen";
+  });
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingMode>(() => {
+    const saved = safeGetItem("cp_thinking_level");
+    return saved === "XHIGH" ? "XHIGH" : "HIGH";
   });
   const [hasEnvKey, setHasEnvKey] = useState<boolean>(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -167,6 +171,11 @@ int main() {
     safeSetItem("cp_selected_model", newModel);
   };
 
+  const handleSaveThinkingLevel = (newLevel: ThinkingMode) => {
+    setThinkingLevel(newLevel);
+    safeSetItem("cp_thinking_level", newLevel);
+  };
+
   // Add files
   const handleAddFiles = (files: AttachedFile[]) => {
     setAttachedFiles((prev) => [...prev, ...files]);
@@ -245,6 +254,7 @@ int main() {
         })),
         codeText: hasRealCode ? codeText : "",
         model,
+        thinkingLevel,
         problemCodeName: activeProblem?.problemCode || problemCodeName,
         selectedQuestionTitle: activeProblem
           ? `${activeProblem.label}: ${activeProblem.title}`
@@ -302,6 +312,7 @@ int main() {
     problemText,
     attachedFiles,
     model,
+    thinkingLevel,
     problemCodeName,
     detectedProblems,
     selectedProblemId,
@@ -498,6 +509,8 @@ int main() {
         onClose={() => setIsSettingsOpen(false)}
         model={model}
         onSaveModel={handleSaveModel}
+        thinkingLevel={thinkingLevel}
+        onSaveThinkingLevel={handleSaveThinkingLevel}
         hasEnvKey={hasEnvKey}
       />
 

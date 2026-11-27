@@ -31,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onReset,
   hasApiKey,
+  selectedModel,
   currentUser,
   onLogout,
   onLoginSuccess,
@@ -229,7 +230,7 @@ export const Header: React.FC<HeaderProps> = ({
             <RotateCcw className="w-4 h-4" />
           </button>
 
-          {/* Settings Button with Key status */}
+          {/* Settings Button with active AI model */}
           <button
             onClick={onOpenSettings}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
@@ -237,14 +238,17 @@ export const Header: React.FC<HeaderProps> = ({
                 ? "bg-slate-900 border-slate-700 text-slate-200 hover:border-indigo-500 hover:bg-slate-850"
                 : "bg-amber-950/30 border-amber-700/60 text-amber-300 hover:bg-amber-900/40"
             }`}
-            title="Cài đặt API Key & Model AI"
+            title={`Cài đặt Model AI (Đang dùng: ${selectedModel})`}
           >
             <Settings className="w-3.5 h-3.5 text-indigo-400" />
             <span className="hidden md:inline">Cài đặt AI</span>
+            <span className="hidden sm:inline text-[10px] font-mono text-indigo-300 bg-indigo-950/70 border border-indigo-500/30 px-1.5 py-0.5 rounded-md">
+              {selectedModel === "gemini-3.1-flash-lite" ? "3.1 Lite" : "4 Hydrogen"}
+            </span>
             {hasApiKey ? (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-400/20" title="API Key đã sẵn sàng" />
+              <span className="w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-emerald-400/20" title="AI sẵn sàng" />
             ) : (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Chưa nhập API Key" />
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Đang kiểm tra kết nối AI" />
             )}
           </button>
         </div>

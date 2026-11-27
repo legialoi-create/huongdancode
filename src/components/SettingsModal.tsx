@@ -1,11 +1,15 @@
-import React, { useState } from "react";
-import { ShieldCheck, X, Cpu, Check, AlertCircle, RefreshCw, Zap, Sparkles } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ShieldCheck, X, Cpu, Check, AlertCircle, RefreshCw, Zap, Sparkles, Brain } from "lucide-react";
+
+export type ThinkingMode = "HIGH" | "XHIGH";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   model: string;
   onSaveModel: (model: string) => void;
+  thinkingLevel: ThinkingMode;
+  onSaveThinkingLevel: (level: ThinkingMode) => void;
   hasEnvKey: boolean;
 }
 
@@ -14,16 +18,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   model,
   onSaveModel,
+  thinkingLevel,
+  onSaveThinkingLevel,
   hasEnvKey,
 }) => {
   const [selectedModel, setSelectedModel] = useState(model);
+  const [selectedThinking, setSelectedThinking] = useState<ThinkingMode>(thinkingLevel);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedModel(model);
+      setSelectedThinking(thinkingLevel);
+      setTestResult(null);
+    }
+  }, [isOpen, model, thinkingLevel]);
 
   if (!isOpen) return null;
 
   const handleSave = () => {
     onSaveModel(selectedModel);
+    onSaveThinkingLevel(selectedThinking);
     onClose();
   };
 
@@ -38,7 +54,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (data.status === "ok" && data.hasEnvKey) {
         setTestResult({
           success: true,
-          message: "Kết nối máy chủ AI thành công! Hệ thống sẵn sàng phân tích thuật toán và tối ưu mã nguồn.",
+          message: "Kết nối máy chủ AI thành công! Hệ thống sẵn sàng chạy Gemini 4 Hydrogen & Gemini 3.1 Flash Lite.",
         });
       } else {
         setTestResult({
@@ -71,8 +87,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Cpu className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Cấu hình Mô hình AI Phân tích</h2>
-              <p className="text-xs text-slate-400">Tùy chọn động cơ phân tích thuật toán & tối ưu C++</p>
+              <h2 className="text-base font-bold text-white">Cấu hình Mô hình AI Mới Nhất</h2>
+              <p className="text-xs text-slate-400">Động cơ Gemini 4 miễn phí tốt nhất cho phân tích thuật toán C++</p>
             </div>
           </div>
           <button
@@ -89,8 +105,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {hasEnvKey ? (
             <div className="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs">
               <ShieldCheck className="w-5 h-5 flex-shrink-0 text-emerald-400 mt-0.5" />
-              <div>
-                <span className="font-semibold text-emerald-200">Hệ thống AI trực tuyến:</span> Máy chủ phân tích thuật toán đã được kết nối tự động với cơ chế tự động chuyển đổi dự phòng (Auto-Failover) chống nghẽn.
+              <div className="space-y-1">
+                <div>
+                  <span className="font-semibold text-emerald-200">Hệ thống AI trực tuyến (Miễn phí):</span> Mô hình chính là <strong className="text-white">Gemini 4 Hydrogen</strong>.
+                </div>
+                <div className="text-[11px] text-emerald-300/85">
+                  Chuỗi dự phòng tự động: <span className="font-mono text-white">gemini-4-hydrogen</span> → <span className="font-mono text-white">gemini-3.1-flash-lite</span> → <span className="font-mono text-white">gemini-3.1-pro-preview</span>
+                </div>
               </div>
             </div>
           ) : (
@@ -107,7 +128,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                Chọn Mô hình AI Chủ đạo
+                Chọn Mô hình AI Khả dụng
               </label>
               <span className="text-xs text-indigo-300 font-mono">
                 {selectedModel}
@@ -115,24 +136,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Option 1: Gemini 3.8 Flash (Recommended Default) */}
+              {/* Option 1: Gemini 4 Hydrogen (Latest Free Gemini 4) */}
               <button
                 type="button"
-                onClick={() => setSelectedModel("gemini-3.8-flash")}
+                onClick={() => setSelectedModel("gemini-4-hydrogen")}
                 className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  selectedModel === "gemini-3.8-flash"
+                  selectedModel === "gemini-4-hydrogen"
                     ? "bg-indigo-600/15 border-indigo-500 text-white shadow-sm ring-1 ring-indigo-500/40"
                     : "bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700"
                 }`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="font-bold text-xs text-indigo-300 flex items-center gap-1.5">
-                    Gemini 3.8 Flash
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Gemini 4 Hydrogen
                   </span>
-                  {selectedModel === "gemini-3.8-flash" && <Check className="w-4 h-4 text-indigo-400" />}
+                  {selectedModel === "gemini-4-hydrogen" && <Check className="w-4 h-4 text-indigo-400" />}
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Khuyên dùng: Cân bằng hoàn hảo giữa tốc độ phản hồi nhanh, chuẩn hóa đề PDF/Word chính xác và tối ưu thuật toán C++ Full AC.
+                  Mới nhất (Khuyên dùng): Thế hệ Gemini 4 mạnh mẽ nhất không tốn phí API, hỗ trợ suy luận sâu tối ưu thuật toán C++ Full AC & OCR đề chuẩn LaTeX.
                 </p>
               </button>
 
@@ -154,11 +176,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {selectedModel === "gemini-3.1-flash-lite" && <Check className="w-4 h-4 text-emerald-400" />}
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Siêu tốc độ: Độ trễ thấp nhất, phản hồi tức thì cho các bài toán cơ bản và kiểm tra nhanh lỗi cú pháp / tràn số.
+                  Siêu tốc độ: Độ trễ cực thấp, phản hồi tức thì cho các bài cơ bản, soát nhanh lỗi cú pháp, tràn số và file I/O.
                 </p>
               </button>
             </div>
           </div>
+
+          {/* Thinking Depth Selector for Gemini 4 Hydrogen */}
+          {selectedModel === "gemini-4-hydrogen" && (
+            <div className="space-y-2 p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-violet-400" />
+                  Độ sâu suy luận (Gemini 4 Hydrogen)
+                </span>
+                <span className="text-[11px] font-mono text-violet-300">{selectedThinking}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedThinking("HIGH")}
+                  className={`px-3 py-2 rounded-lg border text-left text-xs transition-all cursor-pointer ${
+                    selectedThinking === "HIGH"
+                      ? "bg-indigo-600/20 border-indigo-500 text-white font-semibold"
+                      : "bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700"
+                  }`}
+                >
+                  <div>HIGH — Cân bằng</div>
+                  <div className="text-[10px] font-normal text-slate-400 mt-0.5">Nhanh, chính xác cho đa số bài HSG</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedThinking("XHIGH")}
+                  className={`px-3 py-2 rounded-lg border text-left text-xs transition-all cursor-pointer ${
+                    selectedThinking === "XHIGH"
+                      ? "bg-violet-600/20 border-violet-500 text-white font-semibold"
+                      : "bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700"
+                  }`}
+                >
+                  <div>XHIGH — Siêu sâu</div>
+                  <div className="text-[10px] font-normal text-slate-400 mt-0.5">Tối đa tư duy cho DP/Đồ thị/Olympic khó</div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Note about paid API models */}
+          <p className="text-[11px] text-slate-400 leading-relaxed px-1">
+            Lưu ý: Các mô hình trả phí API riêng như <span className="text-slate-300 font-mono">gemini-4-neon</span>, <span className="text-slate-300 font-mono">gemini-4-carbon</span>, <span className="text-slate-300 font-mono">gemini-4-argon</span> không nằm trong hạn mức API miễn phí (gói Gemini Pro cá nhân không áp dụng cho API trả phí), nên ứng dụng đã tự động tối ưu bằng <strong className="text-indigo-300">Gemini 4 Hydrogen (HIGH/XHIGH)</strong> dùng ổn định ngay lập tức.
+          </p>
 
           {/* Test status */}
           {testResult && (

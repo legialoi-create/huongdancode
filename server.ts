@@ -210,8 +210,7 @@ async function startServer() {
       const {
         problemText = "",
         problemFiles = [],
-        userApiKey,
-        model = "gemini-3.8-flash",
+        model = "gemini-4-hydrogen",
       } = req.body || {};
 
       const hasProblemText = problemText && typeof problemText === "string" && problemText.trim().length > 0;
@@ -221,13 +220,11 @@ async function startServer() {
         return res.status(400).json({ error: "Vui lòng cung cấp văn bản đề bài hoặc tải lên file đề (PDF, Word, Ảnh...)" });
       }
 
-      const effectiveApiKey = (userApiKey && typeof userApiKey === "string" && userApiKey.trim())
-        ? userApiKey.trim()
-        : process.env.GEMINI_API_KEY;
+      const effectiveApiKey = process.env.GEMINI_API_KEY;
 
       if (!effectiveApiKey) {
         return res.status(401).json({
-          error: "Chưa cấu hình Gemini API Key. Vui lòng bấm vào biểu tượng Cài đặt (bánh răng) để nhập API Key của bạn.",
+          error: "Hệ thống chưa được cấu hình GEMINI_API_KEY. Vui lòng kiểm tra trong mục Settings > Secrets.",
         });
       }
 
@@ -309,25 +306,21 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
 
       parts.push({ text: promptText });
 
-      let requestedModel = model || "gemini-3.8-flash";
-      if (requestedModel === "gemini-3.1-pro" || requestedModel === "gemini-2.5-pro" || requestedModel === "gemini-pro") {
-        requestedModel = "gemini-3.1-pro-preview";
-      } else if (requestedModel === "gemini-2.5-flash" || requestedModel === "gemini-flash" || requestedModel === "gemini-flash-latest") {
-        requestedModel = "gemini-3.8-flash";
-      }
+      const allowedModels = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]);
+      const requestedModel = allowedModels.has(model) ? model : "gemini-4-hydrogen";
 
-      // Problem reformulation works best with high-throughput flash models (gemini-3.8-flash, gemini-3.1-flash-lite)
+      // Problem reformulation fallback chain: Gemini 4 Hydrogen -> Gemini 3.1 Flash Lite -> Gemini 3.1 Pro Preview
       const candidateModels = Array.from(
         new Set([
-          "gemini-3.8-flash",
           requestedModel,
+          "gemini-4-hydrogen",
           "gemini-3.1-flash-lite",
           "gemini-3.1-pro-preview",
         ])
       );
 
       let response: any = null;
-      let usedModel = "gemini-3.8-flash";
+      let usedModel = "gemini-4-hydrogen";
 
       for (const candidate of candidateModels) {
         try {
@@ -337,7 +330,7 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
             contents: { parts },
             config: {
               systemInstruction,
-              temperature: 0.1,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             },
           });
 
@@ -392,12 +385,11 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
         problemText,
         problemFiles,
         codeText,
-        userApiKey,
-        model = "gemini-3.8-flash",
+        model = "gemini-4-hydrogen",
+        thinkingLevel = "HIGH",
         testCases,
         problemCodeName,
         selectedQuestionTitle,
-        feedbackData,
       } = req.body;
 
       // Smart check if user actually inputted real code in Column 2 (or only empty/boilerplate)
@@ -429,13 +421,11 @@ Hãy đọc thật kỹ, đối chiếu công thức, bảng test và viết l�
         return res.status(400).json({ error: "Vui lòng cung cấp đề bài (nhập văn bản hoặc tải file đính kèm)." });
       }
 
-      const effectiveApiKey = (userApiKey && typeof userApiKey === "string" && userApiKey.trim())
-        ? userApiKey.trim()
-        : process.env.GEMINI_API_KEY;
+      const effectiveApiKey = process.env.GEMINI_API_KEY;
 
       if (!effectiveApiKey) {
         return res.status(401).json({
-          error: "Chưa cấu hình Gemini API Key. Vui lòng bấm vào biểu tượng Cài đặt (bánh răng) ở góc phải để nhập API Key của bạn, hoặc cấu hình GEMINI_API_KEY trong hệ thống.",
+          error: "Hệ thống chưa được cấu hình GEMINI_API_KEY. Vui lòng kiểm tra trong mục Settings > Secrets.",
         });
       }
 
@@ -625,17 +615,16 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
 
       parts.push({ text: promptText });
 
-      // Dynamic candidate models list for automatic fallback
-      let requestedModel = model || "gemini-3.8-flash";
-      if (requestedModel.includes("1.5") || requestedModel.includes("2.0") || requestedModel === "gemini-pro" || requestedModel === "gemini-flash") {
-        requestedModel = "gemini-3.8-flash";
-      }
+      // Dynamic candidate models list with 3.1 fallback chain behind Gemini 4 Hydrogen
+      const allowedModels = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite", "gemini-3.1-pro-preview"]);
+      const requestedModel = allowedModels.has(model) ? model : "gemini-4-hydrogen";
 
       const candidateModels = Array.from(
         new Set([
           requestedModel,
-          "gemini-3.8-flash",
+          "gemini-4-hydrogen",
           "gemini-3.1-flash-lite",
+          "gemini-3.1-pro-preview",
         ])
       );
 
@@ -654,9 +643,17 @@ Hãy phân tích toàn diện và xuất báo cáo chuẩn xác theo đúng cấ
                 `[AI Analysis] Pass ${pass + 1}, Requesting from ${candidate} (attempt ${attempt + 1})...`
               );
 
+              let resolvedThinkingLevel = ThinkingLevel.MEDIUM;
+              if (candidate === "gemini-4-hydrogen") {
+                resolvedThinkingLevel =
+                  thinkingLevel === "XHIGH" ? ThinkingLevel.XHIGH : ThinkingLevel.HIGH;
+              } else if (candidate === "gemini-3.1-pro-preview") {
+                resolvedThinkingLevel = ThinkingLevel.HIGH;
+              }
+
               const modelConfig: any = {
                 systemInstruction,
-                temperature: 0.1,
+                thinkingConfig: { thinkingLevel: resolvedThinkingLevel },
               };
 
               const resGen = await ai.models.generateContent({
